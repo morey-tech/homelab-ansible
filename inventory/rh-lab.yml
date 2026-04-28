@@ -1,111 +1,4 @@
 ---
-all:
-  hosts:
-    pfsense.home.morey.tech:
-      ansible_user: admin
-    desktop-nick.home.morey.tech:
-      ansible_user: morey-tech
-      ansible_host: 192.168.1.90
-  vars:
-    ssh_authorized_keys: |-
-      ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDIzXVreWXQDh76+WRu9ivOuy8E8dDVOs0UfQpbhV/l9iydhTdPAWvRhbqCKE409rAG3MsZGBBXUWoRwVRtiVZZSBRQw65Pnhhvp4D8Hy4C4ymuTz32nteHrzTX3N+ebMkTbKtMmyCS/KCPcHnk3f6fKcJ99x3Y6NxdXunk6/Y6rkZ9qE0yJ+g0DLNKN7I7b6hkslQ6GKtTLjwJEWQboAQUud6XKHZe0pZzaUyo66gSto+C51kQo98bAvD0AW/urtky4uYYn5vInolFR9/jvvktl8bQhCNvU95L+Tim0Kv9Q2ObSJ5VlXjmWw0XS9IBnr18E3mrgUDwrpvm1zPGlV1lLhDnNqxppmau+XWNlmm/ft4KLQLai0vxXtZLCZ7WG5LSFAFyTwdofSRXFBDp/hPASY+DAMhE5ySnmSDVJ239TAs91SalKvT8unAcdXP5XFJhCQRXAFbamkLk6BaqxzBD75sp4VqZj50IDT9C0mzzXEsUdx+FaqP+Hm0rgXNra/U= morey-tech@desktop-nick
-      ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBACkgEiCPZmF5IWfe3JST2fZeIBnMTeI1yX4v0QuauVM9+ETdT2UGBuzSpnKHLj0teOIPfXyEwEKKV5p+0zXLc2IigBlx/czMk3VStTii93TsD7bqdH35Pbh4RPpHv6v5l2W8z7TmlooeKjSNVNihu5BPM94TxUFLeVQ6etj1YVU/+/QkA== nmorey@nmorey-mac
-    ansible_user: root
-
-lan:
-  hosts:
-    unifi.home.morey.tech:
-      pve_node: ms-04
-      pve_vm_id: 1013
-      ansible_host: "192.168.1.13"
-      ip_address: "192.168.1.13"
-      mac_address: "bc:24:11:01:00:13"
-  vars:
-    cluster_dns_zone: "home.morey.tech"
-    machine_networks:
-      - cidr: "192.168.1.0/24"
-    gateway_ip: "192.168.1.1"
-    net_prefix: "24"
-    pfsense_int: "lan"
-    storage: "storage-pve"
-
-pvems-nodes:
-  hosts:
-    ms-04.home.morey.tech:
-
-pvems-vms:
-  hosts:
-    monitoring.lab.morey.tech:
-      ansible_host: 192.168.3.100
-      pve_vm_id: 3100
-      pve_node: ms-04
-      mac_address: bc:24:11:7b:70:b7
-      vlan_tag: 3
-      cores: 4
-      memory: 8192
-      disk_size: 32G
-    dns.rh-lab.morey.tech:
-      pve_node: ms-04
-      pve_vm_id: 6100
-      ip_address: "192.168.6.100"
-      mac_address: "bc:24:11:3b:7b:8f"
-    debian-12-cloudinit-template:
-      pve_vm_id: 6254
-      pve_node: ms-04
-    satellite.rh-lab.morey.tech:
-  children:
-    ocp-lab-nodes:
-    ocp-dev-nodes:
-    ocp-prd-nodes:
-    rubrik-nodes:
-
-lab:
-  hosts:
-    debian-12.lab.morey.tech:
-      ansible_host: 192.168.3.101
-      pve_vm_id: 3101
-      pve_node: ms-04
-      mac_address: bc:24:11:7b:70:b5
-      cores: 4
-      memory: 8192
-      disk_size: 32G
-      cloud_init_vm_template: debian-12-cloudinit-template
-    dns.lab.morey.tech:
-      pve_node: ms-04
-      pve_vm_id: 3053
-      ip_address: "192.168.3.53"
-      mac_address: "BC:24:11:1F:C5:33"
-    nfs.lab.morey.tech:
-      pve_node: ms-04
-      pve_vm_id: 3054
-      ip_address: "192.168.3.54"
-      mac_address: "BC:24:11:1F:C5:34"
-      lxc_disk_size: 50
-      lxc_features: "nesting=1,mount=nfs"
-    batch-job.lab.morey.tech:
-      pve_node: ms-04
-      pve_vm_id: 3055
-      ip_address: "192.168.3.55"
-      mac_address: "BC:24:11:1F:C5:36"
-      lxc_disk_size: 24
-      lxc_features: "nesting=1"
-    reverse-proxy.lab.morey.tech:
-      pve_node: ms-04
-      pve_vm_id: 3103
-      ip_address: "192.168.3.103"
-      mac_address: "BC:24:11:1F:C5:35"
-  children:
-    rubrik-clusters:
-  vars:
-    cluster_dns_zone: "lab.morey.tech"
-    machine_networks:
-      - cidr: "192.168.3.0/24"
-    gateway_ip: "192.168.3.1"
-    net_prefix: "24"
-    vlan_tag: "3"
-    pfsense_int: opt1  # lab
-    pve_pool: "lab"
-
 rh-lab:
   children:
     ms-ocp-clusters:
@@ -207,7 +100,7 @@ ms-ocp-clusters:
   vars:
     ansible_host: localhost
     ansible_connection: local
-    # high_availability_mode: "Full"  # Dnyamic based on node count.
+    # high_availability_mode: "Full"  # Dynamic based on node count.
     cluster_network_cidr: "10.128.0.0/14"
     cluster_network_host_prefix: "23"
     service_networks:
@@ -240,7 +133,6 @@ ocp-home-nodes:
   vars:
     # cores: 8
     # memory: 16384
-
 
 baremetal-ocp-clusters:
   hosts:
@@ -377,15 +269,3 @@ baremetal-ocp-clusters:
     image_type: "minimal-iso"
     machine_networks:
       - cidr: "192.168.6.0/24"
-
-rubrik-nodes:
-  hosts:
-    rubrik-a.lab.morey.tech:
-    rubrik-b.lab.morey.tech:
-    rubrik-c.lab.morey.tech:
-
-rubrik-clusters:
-  hosts:
-    rubrik.lab.home.morey.tech:
-      cluster_name: rubrik
-      nodes_group: rubrik-nodes

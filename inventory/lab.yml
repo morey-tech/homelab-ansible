@@ -1,0 +1,59 @@
+---
+lab:
+  hosts:
+    debian-12.lab.morey.tech:
+      ansible_host: 192.168.3.101
+      pve_vm_id: 3101
+      pve_node: ms-04
+      mac_address: bc:24:11:7b:70:b5
+      cores: 4
+      memory: 8192
+      disk_size: 32G
+      cloud_init_vm_template: debian-12-cloudinit-template
+    dns.lab.morey.tech:
+      pve_node: ms-04
+      pve_vm_id: 3053
+      ip_address: "192.168.3.53"
+      mac_address: "BC:24:11:1F:C5:33"
+    nfs.lab.morey.tech:
+      pve_node: ms-04
+      pve_vm_id: 3054
+      ip_address: "192.168.3.54"
+      mac_address: "BC:24:11:1F:C5:34"
+      lxc_disk_size: 50
+      lxc_features: "nesting=1,mount=nfs"
+    batch-job.lab.morey.tech:
+      pve_node: ms-04
+      pve_vm_id: 3055
+      ip_address: "192.168.3.55"
+      mac_address: "BC:24:11:1F:C5:36"
+      lxc_disk_size: 24
+      lxc_features: "nesting=1"
+    reverse-proxy.lab.morey.tech:
+      pve_node: ms-04
+      pve_vm_id: 3103
+      ip_address: "192.168.3.103"
+      mac_address: "BC:24:11:1F:C5:35"
+  children:
+    rubrik-clusters:
+  vars:
+    cluster_dns_zone: "lab.morey.tech"
+    machine_networks:
+      - cidr: "192.168.3.0/24"
+    gateway_ip: "192.168.3.1"
+    net_prefix: "24"
+    vlan_tag: "3"
+    pfsense_int: opt1  # lab
+    pve_pool: "lab"
+
+rubrik-nodes:
+  hosts:
+    rubrik-a.lab.morey.tech:
+    rubrik-b.lab.morey.tech:
+    rubrik-c.lab.morey.tech:
+
+rubrik-clusters:
+  hosts:
+    rubrik.lab.home.morey.tech:
+      cluster_name: rubrik
+      nodes_group: rubrik-nodes
