@@ -1,0 +1,129 @@
+---
+- name: Destroy cluster
+  hosts: ms-ocp-clusters
+  gather_facts: false  # Hosts may not be available, since this playbook destroys them.
+
+  vars:
+    pve_api: &pve_api
+      api_user: "{{ pve_api_user }}"
+      api_token_id: "{{ pve_api_token_id }}"
+      api_token_secret: "{{ pve_api_token_secret }}"
+      api_host: "{{ pve_api_host }}"
+
+  vars_prompt:
+    - name: "destory_confirmation"
+      prompt: "Do you want to destory the vms? (yes/no)?"
+      private: false
+
+  tasks:
+    - name: Fail if not "yes"
+      ansible.builtin.fail:
+      when: "destory_confirmation != 'yes'"
+
+    - name: Check if VM exists  # noqa: run-once[task]
+      community.proxmox.proxmox_vm_info:
+        <<: *pve_api
+        vmid: "{{ hostvars[item].pve_vm_id }}"
+        name: "{{ hostvars[item].inventory_hostname_short }}"
+        node: "{{ hostvars[item].pve_node }}"
+        config: current
+      loop: "{{ groups[nodes_group] }}"
+      register: vm_states
+
+    # Stop with force first before destroy to speed up.
+    - name: Stop VMs  # noqa: run-once[task]
+      community.proxmox.proxmox_kvm:
+        <<: *pve_api
+        vmid: "{{ hostvars[item.item].pve_vm_id }}"
+        name: "{{ hostvars[item.item].inventory_hostname_short }}"
+        node: "{{ hostvars[item.item].pve_node }}"
+        state: stopped
+        force: true
+        timeout: 15  # short graceful shutdown since will be destroyed.
+      loop: "{{ vm_states.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: "item.proxmox_vms != []"
+
+    - name: Destroy VMs  # noqa: run-once[task]
+      community.proxmox.proxmox_kvm:
+        <<: *pve_api
+        vmid: "{{ hostvars[item.item].pve_vm_id }}"
+        name: "{{ hostvars[item.item].inventory_hostname_short }}"
+        node: "{{ hostvars[item.item].pve_node }}"
+        state: absent
+        force: true
+        timeout: 300
+      loop: "{{ vm_states.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: "item.proxmox_vms != []"
+
+    - name: Delete PVE pool  # noqa: run-once[task]
+      community.proxmox.proxmox_pool:
+        <<: *pve_api
+        poolid: "{{ cluster_name }}"
+        state: absent
+
+    - name: Delete DHCP static mappings
+      pfsensible.core.pfsense_dhcp_static:
+        netif: opt3
+        macaddr: "{{ hostvars[item.item].mac_address }}"
+        state: absent
+      delegate_to: pfsense.home.morey.tech
+      throttle: 1
+      loop: "{{ vm_states.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Remove DNS zone from named.conf.local  # noqa: run-once[task]
+      ansible.builtin.blockinfile:
+        path: /etc/bind/named.conf.local
+        block: |
+          zone "{{ cluster_name }}.{{ cluster_dns_zone }}" {
+              type master;
+              file "/etc/bind/db.{{ cluster_name }}.{{ cluster_dns_zone }}";
+          };
+        marker: "// {mark} ANSIBLE MANAGED BLOCK"
+        insertafter: "EOF"
+        state: absent
+      notify: Reload BIND9
+      delegate_to: dns.rh-lab.morey.tech
+
+    - name: Delete DNS zone  # noqa: run-once[task]
+      ansible.builtin.file:
+        path: "/etc/bind/db.{{ cluster_name }}.{{ cluster_dns_zone }}"
+        state: absent
+      notify: Reload BIND9
+      delegate_to: dns.rh-lab.morey.tech
+
+    - name: Get a list of clusters  # noqa: run-once[task]
+      rhpds.assisted_installer.list_clusters:
+        offline_token: "{{ rh_console_offline_token }}"
+      register: listclusters
+
+    - name: Remove Assisted Installer Cluster  # noqa: run-once[task]
+      rhpds.assisted_installer.delete_cluster:
+        cluster_id: "{{ item.id }}"
+        offline_token: "{{ rh_console_offline_token }}"
+        # cancel: true
+      loop: "{{ listclusters.result | selectattr('name', 'equalto', cluster_name) | list }}"
+      loop_control:
+        label: "{{ item.name }}, {{ item.id }}"
+
+    - name: Delete Discovery ISOs  # noqa: run-once[task]
+      ansible.builtin.file:
+        path: "/mnt/pve/storage-pve/template/iso/{{ cluster_name }}-{{ item.id }}-discovery.iso"
+        state: absent
+      loop: "{{ listclusters.result | selectattr('name', 'equalto', cluster_name) | list }}"
+      loop_control:
+        label: "{{ item.name }}, {{ item.id }}"
+      delegate_to: "{{ groups['pvems-nodes'][1] }}"  # Pick a host from the hypervisor group
+
+  handlers:
+    - name: Reload BIND9  # noqa: run-once[task]
+      ansible.builtin.service:
+        name: bind9
+        state: reloaded
+      delegate_to: dns.rh-lab.morey.tech
+      run_once: true

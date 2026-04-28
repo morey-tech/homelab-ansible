@@ -1,0 +1,414 @@
+---
+- name: Create Lab LXC Containers
+  hosts:
+    - nfs.lab.morey.tech
+    - batch-job.lab.morey.tech
+  gather_facts: false  # Hosts aren't available, since this playbook creates them.
+  become: true
+  serial: 1  # Create containers one at a time to maintain order
+  vars:
+    storage: "storage-pve"  # Adjust to your storage name
+    template_name: "debian-12-standard_12.12-1_amd64.tar.zst"
+    pve_api: &pve_api
+      api_user: "{{ pve_api_user }}"
+      api_token_id: "{{ pve_api_token_id }}"
+      api_token_secret: "{{ pve_api_token_secret }}"
+      api_host: "{{ pve_api_host }}"
+
+  tasks:
+    - name: Download LXC OS template to Proxmox storage
+      community.proxmox.proxmox_template:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        storage: "{{ storage }}"
+        content_type: "vztmpl"
+        template: "{{ template_name }}"
+        state: present
+      delegate_to: localhost
+
+    - name: Create LXC container
+      community.proxmox.proxmox:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        vmid: "{{ pve_vm_id }}"
+        hostname: "{{ inventory_hostname_short }}"
+        ostemplate: "{{ storage }}:vztmpl/{{ template_name }}"
+        memory: 2048
+        cores: 2
+        unprivileged: false  # Required for NFS server
+        disk_volume:
+          storage: local-nvme
+          size: "{{ lxc_disk_size }}"
+        netif: '{"net0":"name=eth0,hwaddr={{ mac_address }},ip={{ ip_address }}/{{ net_prefix }},gw={{ gateway_ip }},bridge=vmbr0,tag={{ vlan_tag }}"}'
+        nameserver: "{{ gateway_ip }}"
+        searchdomain: "{{ cluster_dns_zone }}"
+        pubkey: "{{ ssh_authorized_keys }}"
+        state: present
+      delegate_to: localhost
+
+    - name: Configure LXC features
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ pve_vm_id }}.conf"
+        regexp: '^features:'
+        line: "features: {{ lxc_features }}"
+        state: present
+      delegate_to: "{{ pve_node }}.home.morey.tech"
+      become: true
+
+    - name: Create DHCP static mapping
+      pfsensible.core.pfsense_dhcp_static:
+        netif: opt1
+        hostname: "{{ inventory_hostname_short }}"
+        macaddr: "{{ mac_address }}"
+        ipaddr: "{{ ip_address }}"
+        ddnsdomainkeyalgorithm: "hmac-md5"  # fixes diff.
+        state: present
+      # become: false
+      delegate_to: pfsense.home.morey.tech
+
+    - name: Start LXC container
+      community.proxmox.proxmox:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        vmid: "{{ pve_vm_id }}"
+        hostname: "{{ inventory_hostname_short }}"
+        state: started
+      delegate_to: localhost
+
+    - name: Add LXC container to inventory
+      ansible.builtin.add_host:
+        name: "{{ inventory_hostname_short }}.{{ cluster_dns_zone }}"
+        ansible_host: "{{ ip_address }}"
+        ansible_user: root
+      changed_when: false
+
+- name: Configure NFS Server
+  hosts: nfs.lab.morey.tech
+  gather_facts: false
+  become: true
+  vars:
+    users:
+      - name: labuser
+        uid: 2001
+        gid: 2001
+        groups: []
+      - name: serviceaccount
+        uid: 3001
+        gid: 3001
+        groups: [labuser]
+      # - name: poduser
+      #   uid: 4001
+      #   gid: 0
+      #   groups: [labuser]
+
+  tasks:
+    - name: Wait for SSH to come up
+      ansible.builtin.wait_for:
+        host: "{{ ip_address }}"
+        port: 22
+        timeout: 300
+      delegate_to: localhost
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install NFS server
+      ansible.builtin.apt:
+        name: nfs-kernel-server
+        state: present
+
+    - name: Create user groups
+      ansible.builtin.group:
+        name: "{{ item.name }}"
+        gid: "{{ item.gid }}"
+        state: present
+      loop: "{{ users }}"
+      when: item.gid != 0
+
+    - name: Create users
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        uid: "{{ item.uid }}"
+        group: "{{ 'root' if item.gid == 0 else item.name }}"
+        groups: "{{ item.groups | default([]) | join(',') }}"
+        append: "{{ item.groups | default([]) | length > 0 }}"
+        shell: /bin/bash
+        home: "/home/{{ item.name }}"
+        createhome: true
+        state: present
+      loop: "{{ users }}"
+
+    - name: Add SSH authorized keys for users
+      ansible.posix.authorized_key:
+        user: "{{ item.name }}"
+        key: "{{ ssh_authorized_keys }}"
+        state: present
+      loop: "{{ users }}"
+
+    - name: Configure NFS mountd settings
+      ansible.builtin.blockinfile:
+        path: /etc/nfs.conf.d/local.conf
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - Mountd Configuration"
+        block: |
+          [mountd]
+          # manage-gids = no  # Uncomment to trust client-side GID mapping.
+          debug = "auth"
+        create: true
+        mode: '0644'
+      notify: Restart NFS server
+
+    - name: Create NFS export directory
+      ansible.builtin.file:
+        path: /srv/nfs/share
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Configure NFS exports
+      ansible.builtin.blockinfile:
+        path: /etc/exports
+        block: |
+          /srv/nfs/share 192.168.1.0/24(rw,sync,no_subtree_check,root_squash)
+          /srv/nfs/share 192.168.3.0/24(rw,sync,no_subtree_check,root_squash)
+          /srv/nfs/share 192.168.6.0/24(rw,sync,no_subtree_check,root_squash)
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - NFS Exports"
+        create: true
+        mode: '0644'
+      notify: Restart NFS server
+
+    - name: Ensure NFS server is enabled and started
+      ansible.builtin.systemd:
+        name: nfs-kernel-server
+        state: started
+        enabled: true
+
+    - name: Export NFS shares
+      ansible.builtin.command: exportfs -a
+      changed_when: false
+
+  handlers:
+    - name: Restart NFS server
+      ansible.builtin.systemd:
+        name: nfs-kernel-server
+        state: restarted
+
+- name: Configure Batch Job as NFS Client
+  hosts: batch-job.lab.morey.tech
+  gather_facts: false
+  become: true
+  vars:
+    users:
+      - name: labuser
+        uid: 2001
+        gid: 2001
+        groups: []
+      - name: serviceaccount
+        uid: 3001
+        gid: 3001
+        groups: [labuser]
+      - name: poduser
+        uid: 4001
+        gid: 0
+        groups: [labuser]
+
+  tasks:
+    - name: Wait for SSH to come up
+      ansible.builtin.wait_for:
+        host: "{{ ip_address }}"
+        port: 22
+        timeout: 300
+      delegate_to: localhost
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install NFS client and sudo
+      ansible.builtin.apt:
+        name:
+          - nfs-common
+          - sudo
+        state: present
+
+    - name: Create user groups
+      ansible.builtin.group:
+        name: "{{ item.name }}"
+        gid: "{{ item.gid }}"
+        state: present
+      loop: "{{ users }}"
+      when: item.gid != 0
+
+    - name: Create users
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        uid: "{{ item.uid }}"
+        group: "{{ 'root' if item.gid == 0 else item.name }}"
+        groups: "{{ item.groups | default([]) | join(',') }}"
+        append: "{{ item.groups | default([]) | length > 0 }}"
+        shell: /bin/bash
+        home: "/home/{{ item.name }}"
+        createhome: true
+        state: present
+      loop: "{{ users }}"
+
+    - name: Add SSH authorized keys for users
+      ansible.posix.authorized_key:
+        user: "{{ item.name }}"
+        key: "{{ ssh_authorized_keys }}"
+        state: present
+      loop: "{{ users }}"
+
+    - name: Create NFS mount point
+      ansible.builtin.file:
+        path: /mnt/nfs/share
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Mount NFS share
+      ansible.posix.mount:
+        path: /mnt/nfs/share
+        src: nfs.lab.morey.tech:/srv/nfs/share
+        fstype: nfs
+        opts: rw,sync,hard,intr,rsize=8192,wsize=8192
+        state: mounted
+
+    - name: Verify NFS mount
+      ansible.builtin.command: mountpoint -q /mnt/nfs/share
+      changed_when: false
+      failed_when: false
+      register: mount_check
+
+    - name: Display mount status
+      ansible.builtin.debug:
+        msg: "NFS share successfully mounted at /mnt/nfs/share"
+      when: mount_check.rc == 0
+
+- name: Configure NFS Test Data
+  hosts: nfs.lab.morey.tech
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Create results directory
+      ansible.builtin.file:
+        path: /srv/nfs/share/results
+        state: directory
+        mode: '0750'
+        owner: labuser
+        group: labuser
+
+    - name: Create test files with random content
+      ansible.builtin.copy:
+        content: |
+          Batch Job - Results {{ item }}
+          =================================
+          {{ lookup('password', '/dev/null length=800 chars=ascii_letters,digits') }}
+        dest: /srv/nfs/share/results/batch-job-{{ item }}.txt
+        mode: '0640'
+        owner: labuser
+        group: labuser
+      loop:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+
+- name: Test NFS Permissions from Batch Job
+  hosts: batch-job.lab.morey.tech
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Test labuser - List directory
+      ansible.builtin.command: ls -la /mnt/nfs/share/results
+      become_user: labuser
+      become: true
+      register: labuser_list
+      failed_when: false
+      changed_when: false
+
+    - name: Test labuser - Read file
+      ansible.builtin.command: cat /mnt/nfs/share/results/batch-job-1.txt
+      become_user: labuser
+      become: true
+      register: labuser_read
+      failed_when: false
+      changed_when: false
+
+    - name: Test labuser - Write to file
+      ansible.builtin.shell: echo "labuser write test" >> /mnt/nfs/share/results/batch-job-1.txt
+      become_user: labuser
+      become: true
+      register: labuser_write
+      failed_when: false
+      changed_when: false
+
+    - name: Test serviceaccount - List directory
+      ansible.builtin.command: ls -la /mnt/nfs/share/results
+      become_user: serviceaccount
+      become: true
+      register: serviceaccount_list
+      failed_when: false
+      changed_when: false
+
+    - name: Test serviceaccount - Read file
+      ansible.builtin.command: cat /mnt/nfs/share/results/batch-job-1.txt
+      become_user: serviceaccount
+      become: true
+      register: serviceaccount_read
+      failed_when: false
+      changed_when: false
+
+    - name: Test serviceaccount - Write to file (should fail)
+      ansible.builtin.shell: echo "serviceaccount write test" >> /mnt/nfs/share/results/batch-job-1.txt
+      become_user: serviceaccount
+      become: true
+      register: serviceaccount_write
+      failed_when: false
+      changed_when: false
+
+    - name: Test poduser - List directory (should fail)
+      ansible.builtin.command: ls -la /mnt/nfs/share/results
+      become_user: poduser
+      become: true
+      register: poduser_list
+      failed_when: false
+      changed_when: false
+
+    - name: Test poduser - Read file (should fail)
+      ansible.builtin.command: cat /mnt/nfs/share/results/batch-job-1.txt
+      become_user: poduser
+      become: true
+      register: poduser_read
+      failed_when: false
+      changed_when: false
+
+    - name: Test poduser - Write to file (should fail)
+      ansible.builtin.shell: echo "poduser write test" >> /mnt/nfs/share/results/batch-job-1.txt
+      become_user: poduser
+      become: true
+      register: poduser_write
+      failed_when: false
+      changed_when: false
+
+    - name: Display test results
+      ansible.builtin.debug:
+        msg: "{{ item.msg }}"
+      loop:
+        - { msg: "labuser List: {{ 'SUCCESS' if labuser_list.rc == 0 else 'FAILED' }} (expected: SUCCESS)", failed: "{{ labuser_list.rc != 0 }}" }
+        - { msg: "labuser Read: {{ 'SUCCESS' if labuser_read.rc == 0 else 'FAILED' }} (expected: SUCCESS)", failed: "{{ labuser_read.rc != 0 }}" }
+        - { msg: "labuser Write: {{ 'SUCCESS' if labuser_write.rc == 0 else 'FAILED' }} (expected: SUCCESS)", failed: "{{ labuser_write.rc != 0 }}" }
+        - { msg: "serviceaccount List: {{ 'SUCCESS' if serviceaccount_list.rc == 0 else 'FAILED' }} (expected: SUCCESS)", failed: "{{ serviceaccount_list.rc != 0 }}" }
+        - { msg: "serviceaccount Read: {{ 'SUCCESS' if serviceaccount_read.rc == 0 else 'FAILED' }} (expected: SUCCESS)", failed: "{{ serviceaccount_read.rc != 0 }}" }
+        - { msg: "serviceaccount Write: {{ 'FAILED' if serviceaccount_write.rc != 0 else 'SUCCESS' }} (expected: FAILED)", failed: "{{ serviceaccount_write.rc == 0 }}" }
+        - { msg: "poduser List: {{ 'FAILED' if poduser_list.rc != 0 else 'SUCCESS' }} (expected: FAILED)", failed: "{{ poduser_list.rc == 0 }}" }
+        - { msg: "poduser Read: {{ 'FAILED' if poduser_read.rc != 0 else 'SUCCESS' }} (expected: FAILED)", failed: "{{ poduser_read.rc == 0 }}" }
+        - { msg: "poduser Write: {{ 'FAILED' if poduser_write.rc != 0 else 'SUCCESS' }} (expected: FAILED)", failed: "{{ poduser_write.rc == 0 }}" }
+      failed_when: item.failed

@@ -1,0 +1,291 @@
+---
+- name: Create UniFi LXC
+  hosts:
+    - unifi.home.morey.tech
+  gather_facts: false  # Hosts aren't available, since this playbook creates them.
+  become: true
+  vars:
+    template_name: "debian-12-standard_12.12-1_amd64.tar.zst"
+    pve_api: &pve_api
+      api_user: "{{ pve_api_user }}"
+      api_token_id: "{{ pve_api_token_id }}"
+      api_token_secret: "{{ pve_api_token_secret }}"
+      api_host: "{{ pve_api_host }}"
+
+  tasks:
+    - name: Download LXC OS template to Proxmox storage
+      community.proxmox.proxmox_template:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        storage: "{{ storage }}"
+        content_type: "vztmpl"
+        template: "{{ template_name }}"
+        state: present
+      delegate_to: localhost
+
+    - name: Create LXC container
+      community.proxmox.proxmox:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        vmid: "{{ pve_vm_id }}"
+        hostname: "{{ inventory_hostname_short }}"
+        ostemplate: "{{ storage }}:vztmpl/{{ template_name }}"
+        memory: 2048
+        cores: 2
+        disk_volume:
+          storage: local-nvme
+          size: 24
+        netif: '{"net0":"name=eth0,hwaddr={{ mac_address }},ip={{ ip_address }}/{{ net_prefix }},gw={{ gateway_ip }},bridge=vmbr0"}'
+        nameserver: "{{ gateway_ip }}"
+        searchdomain: "{{ cluster_dns_zone }}"
+        pubkey: "{{ ssh_authorized_keys }}"
+        features:
+          - nesting=1
+        state: present
+      delegate_to: localhost
+
+    - name: Create DHCP static mapping
+      pfsensible.core.pfsense_dhcp_static:
+        netif: lan
+        hostname: "{{ inventory_hostname_short }}"
+        macaddr: "{{ mac_address }}"
+        ipaddr: "{{ ip_address }}"
+        ddnsdomainkeyalgorithm: "hmac-md5"  # fixes diff.
+        state: present
+      delegate_to: pfsense.home.morey.tech
+
+    - name: Start LXC container
+      community.proxmox.proxmox:
+        <<: *pve_api
+        vmid: "{{ pve_vm_id }}"
+        state: started
+      delegate_to: localhost
+
+    - name: Add LXC container to inventory
+      ansible.builtin.add_host:
+        name: "{{ inventory_hostname_short }}.{{ cluster_dns_zone }}"
+        ansible_host: "{{ ip_address }}"
+        ansible_user: root
+      changed_when: false
+
+- name: Install UniFi Network Controller
+  hosts:
+    - unifi.home.morey.tech
+  gather_facts: false
+  become: true
+
+  handlers:
+    - name: Restart UniFi
+      ansible.builtin.service:
+        name: unifi
+        state: restarted
+
+  tasks:
+    - name: Wait for SSH to become available
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: 22
+        delay: 5
+        timeout: 120
+      delegate_to: localhost
+
+    - name: Wait for system to be ready
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 120
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - apt-transport-https
+          - wget
+          - gnupg
+        state: present
+
+    - name: Add UniFi GPG key
+      ansible.builtin.get_url:
+        url: https://dl.ui.com/unifi/unifi-repo.gpg
+        dest: /etc/apt/trusted.gpg.d/unifi-repo.gpg
+        mode: '0644'
+
+    - name: Add UniFi APT repository
+      ansible.builtin.copy:
+        content: "deb [ arch=amd64,arm64 ] https://www.ui.com/downloads/unifi/debian stable ubiquiti\n"
+        dest: /etc/apt/sources.list.d/100-ubnt-unifi.list
+        mode: '0644'
+
+    - name: Add MongoDB GPG key
+      ansible.builtin.get_url:
+        url: https://www.mongodb.org/static/pgp/server-7.0.asc
+        dest: /etc/apt/trusted.gpg.d/mongodb-server-7.0.asc
+        mode: '0644'
+
+    - name: Add MongoDB 7.0 repository for Debian 12
+      ansible.builtin.copy:
+        content: "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/7.0 main\n"
+        dest: /etc/apt/sources.list.d/mongodb-org-7.0.list
+        mode: '0644'
+
+    - name: Update apt cache after adding repositories
+      ansible.builtin.apt:
+        update_cache: true
+
+    # Option 1: Install specific version via direct .deb download
+    - name: Download UniFi Network Controller v10.1.89 deb package
+      ansible.builtin.get_url:
+        url: https://dl.ui.com/unifi/10.1.89/unifi_sysvinit_all.deb
+        dest: /tmp/unifi_10.1.89.deb
+        mode: '0644'
+
+    - name: Install UniFi Network Controller v10.1.89
+      ansible.builtin.apt:
+        deb: /tmp/unifi_10.1.89.deb
+        state: present
+
+    # Option 2: Install latest version from apt repo (uncomment to use)
+    # - name: Install UniFi Network Controller (latest)
+    #   ansible.builtin.apt:
+    #     name: unifi
+    #     state: present
+
+    - name: Enable UniFi service
+      ansible.builtin.systemd:
+        name: unifi
+        enabled: true
+        daemon_reload: true
+
+    - name: Start UniFi service
+      ansible.builtin.service:
+        name: unifi
+        state: started
+
+    - name: Wait for UniFi to be ready
+      ansible.builtin.wait_for:
+        port: 8443
+        delay: 10
+        timeout: 120
+
+    - name: Display UniFi access information
+      ansible.builtin.debug:
+        msg:
+          - "UniFi Network Controller is ready!"
+          - ""
+          - "Web UI: https://{{ ip_address }}:8443"
+          - "Inform URL: http://{{ ip_address }}:8080/inform"
+          - ""
+          - "To adopt devices, SSH into each device and run:"
+          - "  set-inform http://{{ ip_address }}:8080/inform"
+
+- name: Configure Let's Encrypt Certificate for UniFi
+  hosts:
+    - unifi.home.morey.tech
+  gather_facts: true
+  become: true
+  vars:
+    unifi_domain: "unifi.home.morey.tech"
+    certbot_email: "info+unifi.home@morey.tech"
+
+  handlers:
+    - name: Restart UniFi for certificate
+      ansible.builtin.service:
+        name: unifi
+        state: restarted
+
+  tasks:
+    - name: Install certbot and Cloudflare DNS plugin
+      ansible.builtin.apt:
+        name:
+          - certbot
+          - python3-certbot-dns-cloudflare
+        state: present
+        update_cache: true
+
+    - name: Create letsencrypt directory
+      ansible.builtin.file:
+        path: /etc/letsencrypt
+        state: directory
+        mode: '0755'
+
+    - name: Deploy Cloudflare credentials file
+      ansible.builtin.template:
+        src: cloudflare-credentials.ini.j2
+        dest: /etc/letsencrypt/cloudflare-credentials.ini
+        mode: '0600'
+        owner: root
+        group: root
+
+    - name: Deploy certificate import script
+      ansible.builtin.template:
+        src: unifi-cert-import.sh.j2
+        dest: /usr/local/bin/unifi-cert-import.sh
+        mode: '0700'
+        owner: root
+        group: root
+
+    - name: Create certbot renewal hooks directory
+      ansible.builtin.file:
+        path: /etc/letsencrypt/renewal-hooks/deploy
+        state: directory
+        mode: '0755'
+        recurse: true
+
+    - name: Deploy certbot renewal hook
+      ansible.builtin.template:
+        src: unifi-certbot-deploy-hook.sh.j2
+        dest: /etc/letsencrypt/renewal-hooks/deploy/unifi-cert-import.sh
+        mode: '0700'
+        owner: root
+        group: root
+
+    - name: Check if certificate already exists
+      ansible.builtin.stat:
+        path: "/etc/letsencrypt/live/{{ unifi_domain }}/fullchain.pem"
+      register: cert_exists
+
+    - name: Obtain Let's Encrypt certificate
+      ansible.builtin.command:
+        cmd: >
+          certbot certonly
+          --dns-cloudflare
+          --dns-cloudflare-credentials /etc/letsencrypt/cloudflare-credentials.ini
+          --dns-cloudflare-propagation-seconds 60
+          --email {{ certbot_email }}
+          --agree-tos
+          --non-interactive
+          --domain {{ unifi_domain }}
+      when: not cert_exists.stat.exists
+      register: certbot_result
+      changed_when: "'Successfully received certificate' in certbot_result.stdout"
+
+    - name: Import certificate into UniFi keystore
+      ansible.builtin.command:
+        cmd: /usr/local/bin/unifi-cert-import.sh
+      when: certbot_result.changed or not cert_exists.stat.exists
+      register: import_result
+      changed_when: "'Certificate import complete' in import_result.stdout"
+
+    - name: Enable certbot renewal timer
+      ansible.builtin.systemd:
+        name: certbot.timer
+        enabled: true
+        state: started
+
+    - name: Display certificate information
+      ansible.builtin.debug:
+        msg:
+          - "Let's Encrypt certificate configured!"
+          - ""
+          - "Domain: {{ unifi_domain }}"
+          - "Certificate path: /etc/letsencrypt/live/{{ unifi_domain }}/"
+          - "Renewal: Automatic via certbot.timer (twice daily)"
+          - ""
+          - "Web UI: https://{{ unifi_domain }}:8443"

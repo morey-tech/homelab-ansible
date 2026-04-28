@@ -1,0 +1,53 @@
+---
+- name: Delete dns.rh-lab LXC
+  hosts:
+    - dns.rh-lab.morey.tech
+  gather_facts: false  # Hosts aren't available, since this playbook creates them.
+  become: true
+  vars:
+    storage: "storage-pve"  # Adjust to your storage name
+    template_name: "debian-11-standard_11.7-1_amd64.tar.zst"
+    delete_lxc_os_template: false
+    pve_api: &pve_api
+      api_user: "{{ pve_api_user }}"
+      api_token_id: "{{ pve_api_token_id }}"
+      api_token_secret: "{{ pve_api_token_secret }}"
+      api_host: "{{ pve_api_host }}"
+
+  tasks:
+    - name: Delete LXC OS template from Proxmox storage
+      community.proxmox.proxmox_template:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        storage: "{{ storage }}"
+        content_type: "vztmpl"
+        template: "{{ template_name }}"
+        state: absent
+        timeout: 120
+      delegate_to: localhost
+      when: delete_lxc_os_template
+
+    - name: Stop LXC container
+      community.proxmox.proxmox:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        vmid: "{{ pve_vm_id }}"
+        state: stopped
+        force: true
+      delegate_to: localhost
+
+    - name: Delete LXC container
+      community.proxmox.proxmox:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        vmid: "{{ pve_vm_id }}"
+        state: absent
+      delegate_to: localhost
+
+    - name: Delete DHCP static mapping
+      pfsensible.core.pfsense_dhcp_static:
+        netif: opt3
+        macaddr: "{{ mac_address }}"
+        state: absent
+      # become: false
+      delegate_to: pfsense.home.morey.tech

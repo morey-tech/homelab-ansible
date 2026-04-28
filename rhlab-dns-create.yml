@@ -1,0 +1,122 @@
+---
+- name: Create dns LXC
+  hosts:
+    - dns.rh-lab.morey.tech
+  gather_facts: false  # Hosts aren't available, since this playbook creates them.
+  become: true
+  vars:
+    storage: "storage-pve"  # Adjust to your storage name
+    template_name: "debian-11-standard_11.7-1_amd64.tar.zst"
+    pve_api: &pve_api
+      api_user: "{{ pve_api_user }}"
+      api_token_id: "{{ pve_api_token_id }}"
+      api_token_secret: "{{ pve_api_token_secret }}"
+      api_host: "{{ pve_api_host }}"
+
+  tasks:
+    - name: Download LXC OS template to Proxmox storage
+      community.proxmox.proxmox_template:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        storage: "{{ storage }}"
+        content_type: "vztmpl"
+        template: "{{ template_name }}"
+        state: present
+      delegate_to: localhost
+
+    - name: Create LXC container
+      community.proxmox.proxmox:
+        <<: *pve_api
+        node: "{{ pve_node }}"
+        vmid: "{{ pve_vm_id }}"
+        hostname: "{{ inventory_hostname_short }}"
+        ostemplate: "{{ storage }}:vztmpl/{{ template_name }}"
+        memory: 2048
+        cores: 2
+        disk_volume:
+          storage: local-nvme
+          size: 24
+        netif: '{"net0":"name=eth0,hwaddr={{ mac_address }},ip={{ ip_address }}/{{ net_prefix }},gw={{ gateway_ip }},bridge=vmbr0,tag=6"}'
+        nameserver: "192.168.6.1"
+        searchdomain: "rh-lab.morey.tech"
+        pubkey: "{{ ssh_authorized_keys }}"
+        features: # Fix slow login
+          - nesting=1
+        state: present
+      delegate_to: localhost
+
+    - name: Create DHCP static mapping
+      pfsensible.core.pfsense_dhcp_static:
+        netif: opt3
+        hostname: "{{ inventory_hostname_short }}"
+        macaddr: "{{ mac_address }}"
+        ipaddr: "{{ ip_address }}"
+        ddnsdomainkeyalgorithm: "hmac-md5"  # fixes diff.
+        state: present
+      # become: false
+      delegate_to: pfsense.home.morey.tech
+
+    - name: Start LXC container
+      community.proxmox.proxmox:
+        <<: *pve_api
+        vmid: "{{ pve_vm_id }}"
+        state: started
+      delegate_to: localhost
+
+    - name: Add LXC container to inventory
+      ansible.builtin.add_host:
+        name: "{{ inventory_hostname_short }}.rh-lab.morey.tech"
+        ansible_host: "{{ ip_address }}"
+        ansible_user: root
+      changed_when: false
+
+- name: Configure base DNS Server
+  hosts: dns.rh-lab.morey.tech
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Install BIND9
+      ansible.builtin.apt:
+        name: bind9
+        state: present
+        update_cache: true
+
+    - name: Configure BIND9 options
+      ansible.builtin.template:
+        src: named.conf.options.j2
+        dest: /etc/bind/named.conf.options
+        mode: '0644'
+      notify: Reload BIND9
+
+    - name: Add DNS zone to named.conf.options  # noqa: run-once[task]
+      ansible.builtin.blockinfile:
+        path: /etc/bind/named.conf.local
+        block: |
+          zone "{{ cluster_dns_zone }}" {
+              type master;
+              file "/etc/bind/db.{{ cluster_dns_zone }}";
+          };
+        marker: "// {mark} ANSIBLE MANAGED BLOCK"
+        insertafter: "EOF"
+        append_newline: true
+        prepend_newline: true
+        state: present
+      notify: Reload BIND9
+
+    - name: Configure rh-lab DNS zone  # noqa: run-once[task]
+      ansible.builtin.template:
+        src: db.j2
+        dest: "/etc/bind/db.{{ cluster_dns_zone }}"
+        mode: '0644'
+      notify: Reload BIND9
+      vars:
+        dns_zone: "{{ cluster_dns_zone }}"
+        dns_records:
+          - { name: "{{ inventory_hostname_short }}", ip: "{{ ip_address }}" }
+        dns_ip_address: "{{ ip_address }}"
+
+  handlers:
+    - name: Reload BIND9
+      ansible.builtin.service:
+        name: bind9
+        state: reloaded

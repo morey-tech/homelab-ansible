@@ -1,0 +1,15 @@
+---
+- name: Create Monitoring Host VM
+  hosts:
+    - monitoring.lab.morey.tech
+    - debian-12.lab.morey.tech
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Include ms_create_vm role
+      ansible.builtin.include_role:
+        name: ms_create_vm
+      vars:
+        ms_create_vm_recreate: true
+        ms_create_vm_cloud_init_template: "{{ cloud_init_vm_template }}"

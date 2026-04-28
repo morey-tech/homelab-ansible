@@ -1,0 +1,123 @@
+---
+# Ansible Playbook: HAProxy SNI-Based Routing
+# Configures HAProxy on pfSense for TCP mode SNI-based routing with SSL passthrough
+
+- name: Configure HAProxy SNI routing
+  hosts: pfsense.home.morey.tech
+  gather_facts: false
+
+  vars:
+    # Frontend configuration
+    frontend_name: "wan-ingress"
+    frontend_bind_addr: "wan_ipv4"
+    frontend_port: 443
+
+    # Backend configurations
+    backends:
+      - name: "ocp-home-backend"
+        server_ip: "192.168.6.71"
+        server_port: 443
+      - name: "ocp-gpu-backend"
+        server_ip: "192.168.6.81"
+        server_port: 443
+
+    # Routing rules for SNI-based routing
+    routing_rules:
+      - acl_name: "overseerr_sni"
+        sni_hostname: "overseerr.morey.tech"
+        backend_name: "ocp-home-backend"
+      - acl_name: "aap_sni"
+        sni_hostname: "aap.morey.tech"
+        backend_name: "ocp-gpu-backend"
+
+  tasks:
+    # 1. Create HTTPS backend pool
+    - name: Create HAProxy backend for HTTPS
+      pfsensible.haproxy.pfsense_haproxy_backend:
+        name: "{{ item.name }}"
+        balance: roundrobin
+        check_type: SSL
+        check_frequency: 2000
+        connection_timeout: 30000
+        server_timeout: 30000
+        retries: 3
+        state: present
+      loop: "{{ backends }}"
+      throttle: 1
+      tags:
+        - haproxy
+        - backend
+
+    # 2. Add backend server
+    - name: Add backend server
+      pfsensible.haproxy.pfsense_haproxy_backend_server:
+        backend: "{{ item.name }}"
+        name: "{{ item.name }}-server"
+        address: "{{ item.server_ip }}"
+        port: "{{ item.server_port }}"
+        mode: active
+        state: present
+      loop: "{{ backends }}"
+      throttle: 1
+      tags:
+        - haproxy
+        - backend
+
+    # 3. Create frontend in TCP/SNI mode
+    - name: Create HAProxy frontend
+      pfsensible.haproxy.pfsense_haproxy_frontend:
+        name: "{{ frontend_name }}"
+        desc: "SNI-based routing"
+        status: active
+        type: https  # TCP mode with SNI inspection
+        max_connections: 2000
+        state: present
+      throttle: 1
+      tags:
+        - haproxy
+        - frontend
+
+    # 4. Bind frontend to port 443
+    - name: Bind frontend to WAN port 443
+      pfsensible.haproxy.pfsense_haproxy_frontend_server:
+        frontend: "{{ frontend_name }}"
+        extaddr: "{{ frontend_bind_addr }}"
+        extaddr_port: "{{ frontend_port }}"
+        extaddr_ssl: "no"  # SSL passthrough, no offloading
+        state: present
+      throttle: 1
+      tags:
+        - haproxy
+        - frontend
+        - bind
+########
+    # 5. Create SNI ACL
+    - name: Create ACL for SNI hostname
+      pfsensible.haproxy.pfsense_haproxy_frontend_acl:
+        frontend: "{{ frontend_name }}"
+        name: "{{ item.acl_name }}"
+        expression: ssl_sni_matches
+        value: "{{ item.sni_hostname }}"
+        casesensitive: false
+        state: present
+      loop: "{{ routing_rules }}"
+      throttle: 1
+      tags:
+        - haproxy
+        - frontend
+        - acl
+
+    # 6. Create routing action
+    - name: Route traffic to backend
+      pfsensible.haproxy.pfsense_haproxy_frontend_action:
+        frontend: "{{ frontend_name }}"
+        action: use_backend
+        backend: "{{ item.backend_name }}"
+        acl: "{{ item.acl_name }}"
+        state: present
+      loop: "{{ routing_rules }}"
+      throttle: 1
+      tags:
+        - haproxy
+        - frontend
+        - action
