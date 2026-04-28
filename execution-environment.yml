@@ -1,0 +1,14 @@
+---
+version: 3
+
+images:
+  base_image:
+    name: registry.redhat.io/ansible-automation-platform/ee-minimal-rhel9:latest
+
+dependencies:
+  galaxy: ee-requirements.yml
+  python:
+    - proxmoxer>=2.0.0
+    - requests
+  system:
+    - git  # required for git+https collection installs

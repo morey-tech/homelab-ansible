@@ -1,0 +1,19 @@
+---
+collections:
+  - name: community.general
+    version: "12.4.0"
+  # Proxmox modules moved from community.general in v11.0.0
+  - name: community.proxmox
+    version: "1.5.0"
+  - name: community.docker
+    version: ">=3.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0"
+  # renovate: datasource=github-tags depName=rhpds/assisted_installer
+  - name: git+https://github.com/rhpds/assisted_installer
+    version: v0.0.2
+  - name: pfsensible.core
+    version: "0.7.1"
+  # renovate: datasource=github-tags depName=morey-tech/pfsensible-haproxy
+  - name: git+https://github.com/morey-tech/pfsensible-haproxy.git
+    version: 0.2.0
