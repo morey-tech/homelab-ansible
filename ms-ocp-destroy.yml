@@ -10,15 +10,11 @@
       api_token_secret: "{{ pve_api_token_secret }}"
       api_host: "{{ pve_api_host }}"
 
-  vars_prompt:
-    - name: "destory_confirmation"
-      prompt: "Do you want to destory the vms? (yes/no)?"
-      private: false
-
   tasks:
-    - name: Fail if not "yes"
+    - name: Fail if not confirmed
       ansible.builtin.fail:
-      when: "destory_confirmation != 'yes'"
+        msg: "Destruction cancelled — pass -e confirm_destroy=yes to proceed (AAP: use a Survey)"
+      when: "confirm_destroy | default('no') != 'yes'"
 
     - name: Check if VM exists  # noqa: run-once[task]
       community.proxmox.proxmox_vm_info:

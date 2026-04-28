@@ -13,16 +13,11 @@
     template_name: "debian-12-standard_12.12-1_amd64.tar.zst"
     delete_lxc_os_template: false
 
-  vars_prompt:
-    - name: "destroy_confirmation"
-      prompt: "Do you want to destroy the UniFi container (unifi.home.morey.tech)? (yes/no)"
-      private: false
-
   tasks:
     - name: Fail if not confirmed
       ansible.builtin.fail:
-        msg: "Destruction cancelled - confirmation not received"
-      when: "destroy_confirmation != 'yes'"
+        msg: "Destruction cancelled — pass -e confirm_destroy=yes to proceed (AAP: use a Survey)"
+      when: "confirm_destroy | default('no') != 'yes'"
 
     - name: Stop LXC container
       community.proxmox.proxmox:
