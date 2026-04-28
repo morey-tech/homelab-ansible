@@ -1,7 +1,9 @@
 roles/*
-# But do NOT ignore this role
+# But do NOT ignore these roles
 !roles/nginx_openshift_lb/
 !roles/ms_create_vm/
 !roles/ms_delete_vm/
+!roles/dns_server/
+!roles/ocp_assisted_installer/
 
 vault-password.txt

@@ -124,7 +124,7 @@
 
         - name: Configure DNS zone
           ansible.builtin.template:
-            src: db.j2
+            src: "{{ playbook_dir }}/roles/dns_server/templates/db.j2"
             dest: "/etc/bind/db.{{ cluster_name }}.{{ cluster_dns_zone }}"
             mode: '0644'
           notify: Reload BIND9
