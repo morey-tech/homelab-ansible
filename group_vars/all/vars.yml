@@ -1,3 +1,6 @@
 ---
 # Non-sensitive shared variables for all hosts.
 # Credentials are managed via AAP credential injection (not stored here).
+
+prom_host: monitoring.lab.morey.tech:9090
+loki_host: monitoring.lab.morey.tech:3100
