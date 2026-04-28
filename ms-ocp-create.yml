@@ -216,7 +216,7 @@
 
     - name: Configure Discovery ISO  # noqa: no-handler
       ansible.builtin.include_tasks:
-        file: tasks/discovery-iso.yml
+        file: "{{ playbook_dir }}/roles/ocp_assisted_installer/tasks/discovery-iso.yml"
         apply:
           tags: assisted_installer
       when: vm_create is defined and vm_create.changed
@@ -224,7 +224,7 @@
 
     - name: Install Cluster  # noqa: no-handler
       ansible.builtin.include_tasks:
-        file: tasks/install-cluster.yml
+        file: "{{ playbook_dir }}/roles/ocp_assisted_installer/tasks/install-cluster.yml"
         apply:
           tags: assisted_installer
       when: vm_create is defined and vm_create.changed
