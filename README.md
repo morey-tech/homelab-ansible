@@ -1,8 +1,74 @@
 # Homelab Ansible
 
+## Local Development Setup
+
+This repo is structured for Ansible Automation Platform (AAP). Some settings that AAP manages automatically require manual setup for local development.
+
+### Vault Password
+
+AAP injects credentials directly. Locally, set the vault password file via environment variable:
+
+```bash
+export ANSIBLE_VAULT_PASSWORD_FILE=./vault-password.txt
+```
+
+Get the password from the `Ansible ms Vault Password` entry in Bitwarden and place it in `vault-password.txt`. Add this export to your shell profile (`.zshrc`, `.bashrc`, etc.) or use a `.envrc` file with `direnv`.
+
+### Installing Collections
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
+
+### Running Playbooks
+
+Playbooks are organized under `playbooks/<domain>/`:
+
+```bash
+ansible-playbook playbooks/proxmox/ms-create-vm.yml
+ansible-playbook playbooks/lab/alloy-install.yml
+ansible-playbook playbooks/ocp/ms-ocp-create.yml
+```
+
+### Destroy Playbooks (Confirmation Required)
+
+Destroy playbooks require explicit confirmation to prevent accidents. Pass `confirm_destroy=yes` as an extra variable:
+
+```bash
+ansible-playbook playbooks/ocp/ms-ocp-destroy.yml -e confirm_destroy=yes
+ansible-playbook playbooks/lan/lan-unifi-destroy.yml -e confirm_destroy=yes
+```
+
+In AAP, add an [AAP Survey](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.5/html/using_automation_execution/controller-job-templates#ug_JobTemplates_surveys) field requiring `confirm_destroy=yes` before the job runs.
+
+### Bare-Metal OCP (Two-Stage Process)
+
+Bare-metal OCP cluster creation requires a manual step (booting from USB). Run in two stages:
+
+```bash
+# Stage 1: Create cluster, configure DNS/DHCP, download Discovery ISO
+ansible-playbook playbooks/ocp/baremetal-ocp-prepare.yml
+
+# Write the ISO to USB, boot each node, then run stage 2:
+ansible-playbook playbooks/ocp/baremetal-ocp-install.yml
+```
+
+### Execution Environment (EE)
+
+The EE image is built automatically via GitHub Actions when `execution-environment.yml` or `ee-requirements.yml` change. The image is published to `ghcr.io/nmorey/homelab-ansible/ee-homelab`.
+
+To build locally:
+
+```bash
+pip install ansible-builder
+ansible-builder build -f execution-environment.yml -t homelab-ee:latest
+```
+
+---
+
 ## Renovate PR Workflow
 
-Renovate creates PRs for Ansible Galaxy collection updates in `requirements.yml`. Follow this workflow to test and merge them safely.
+Renovate creates PRs for Ansible Galaxy collection updates in `requirements.yml` and `ee-requirements.yml`. Follow this workflow to test and merge them safely.
 
 ### 1. Review Breaking Changes
 
@@ -22,7 +88,7 @@ Key things to check:
 Find which modules from the collection are used in playbooks:
 
 ```bash
-grep -r "collection_name\." ansible/ --include="*.yml"
+grep -r "collection_name\." playbooks/ --include="*.yml"
 ```
 
 ### 3. Checkout and Rebase
@@ -32,12 +98,9 @@ gh pr checkout <PR_NUMBER>
 git fetch origin main && git rebase origin/main
 ```
 
-Rebasing ensures the PR includes any recent changes to main.
-
 ### 4. Install Updated Collections
 
 ```bash
-cd ansible
 ansible-galaxy collection install -r requirements.yml --force
 ```
 
@@ -46,29 +109,23 @@ ansible-galaxy collection install -r requirements.yml --force
 Run syntax checks on affected playbooks:
 
 ```bash
-ansible-playbook --syntax-check <playbook>.yml
+ansible-playbook --syntax-check playbooks/<domain>/<playbook>.yml
 ```
 
 Run actual playbooks to test functionality:
 
 ```bash
-ansible-playbook <playbook>.yml
+ansible-playbook playbooks/<domain>/<playbook>.yml
 ```
 
 ### 6. Comment and Merge
-
-Add testing results to the PR:
 
 ```bash
 gh pr comment <PR_NUMBER> --body "## Testing Results
 - Environment: <versions>
 - Tested: <playbooks>
 - Results: <pass/fail details>"
-```
 
-Push rebased branch and merge:
-
-```bash
 git push --force-with-lease
 gh pr merge <PR_NUMBER> --squash --delete-branch
 ```
@@ -77,46 +134,30 @@ gh pr merge <PR_NUMBER> --squash --delete-branch
 
 For major changes like module relocations:
 
-1. Add new collection to `requirements.yml`
+1. Add new collection to `requirements.yml` and `ee-requirements.yml`
 2. Update module FQCNs in all playbooks (e.g., `community.general.proxmox` → `community.proxmox.proxmox`)
 3. Run syntax checks on all modified files
 4. Test with actual playbook execution
 5. Commit fixes to the PR branch before merging
 
-## Lab
-
-## Rubrik
-Run `ansible` commands from in the `ansible/ms` folder to ensure that the `ansible.cfg` is used.
-
-```
-cd ansible/ms
-```
-
-## Ansible Vault
-Take the password from the `Ansible ms Vault Password` entry in Bitwarden and place it in the `vault-password.txt` file.
+---
 
 ## Initial Configuration
-Ensure the authentication to the hosts has been configured to use ssh keys. (replace `<nn>` with the node number, `01`)
-```
-ssh-copy-id root@ms-<nn>.home.morey.tech
-```
 
-Confirm with the `ping` module.
+Ensure SSH key authentication is configured for all hosts:
+
 ```bash
-ansible -m ping all
+ssh-copy-id root@ms-04.home.morey.tech
 ```
 
-```
-ms-<nn>.home.morey.tech | SUCCESS => {
-    "ansible_facts": {
-        "discovered_interpreter_python": "/usr/bin/python3"
-    },
-    "changed": false,
-    "ping": "pong"
-}
+Confirm with the `ping` module:
+
+```bash
+ansible -m ping pvems-nodes
 ```
 
-## Setting Up Proxmox API Permisssions
+## Setting Up Proxmox API Permissions
+
 Create a new user named `ansible` with the Realm `Proxmox VE` on the Proxmox datacenter.
 - https://ms-04.home.morey.tech:8006/#v1:0:18:4:31::::::14
 
@@ -126,9 +167,10 @@ Assign `PVEAdmin` role and path `/` to the `ansible@pve` user and the `ansible@p
 Create an API token with the Token ID `ansible`.
 - https://ms-04.home.morey.tech:8006/#v1:0:18:4:31::::::=apitokens
 
-## Upgrading Nodes
-```
-ansible-playbook upgrade.yml
+## Upgrading Proxmox Nodes
+
+```bash
+ansible-playbook playbooks/proxmox/pvems-upgrade.yml
 ```
 
 ## UniFi Network Controller
@@ -139,18 +181,18 @@ The UniFi Network Controller runs on an LXC container on the LAN network.
 - **Inform URL**: http://192.168.1.13:8080/inform
 
 ### Create/Destroy
+
 ```bash
-ansible-playbook lan-unifi-create.yml
-ansible-playbook lan-unifi-destroy.yml
+ansible-playbook playbooks/lan/lan-unifi-create.yml
+ansible-playbook playbooks/lan/lan-unifi-destroy.yml -e confirm_destroy=yes
 ```
 
 ### Adopting Devices
 
-To connect a device to the controller, SSH into it and run the `set-inform` command (credentials for provisioned devices are `root` / `server` in Bitwarden):
+SSH into the device and run the `set-inform` command (credentials for provisioned devices are `root` / `server` in Bitwarden):
 
 ```bash
 ssh root@<device-ip>
-
 set-inform http://192.168.1.13:8080/inform
 ```
 
