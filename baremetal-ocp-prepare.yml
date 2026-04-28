@@ -1,5 +1,8 @@
 ---
-- name: Set Up cluster
+# Stage 1 of 2: Create cluster record, configure DNS/DHCP, and download Discovery ISO.
+# After this playbook completes, write the ISO to USB and boot each bare-metal node.
+# Then run baremetal-ocp-install.yml to wait for host discovery and install the cluster.
+- name: Prepare bare-metal OCP cluster
   hosts: baremetal-ocp-clusters
   gather_facts: false  # Hosts aren't available, since this playbook creates them.
 
@@ -151,42 +154,13 @@
         mode: '0777'
         force: true
       delegate_to: "desktop-nick.home.morey.tech"  # Pick a host from the hypervisor group
-      register: download_discovery_iso
 
-    - name: Print link to assisted installer
+    - name: Print next steps
       ansible.builtin.debug:
-        msg: "https://console.redhat.com/openshift/assisted-installer/clusters/{{ cluster_id }}"
-
-    # Pause for user to boot host via USB. Press enter to continue.
-    - name: Pause for USB boot
-      ansible.builtin.pause:
-        prompt: "Write to ISO USB via desktop-nick, and boot each node. Press Enter to continue when all nodes are booted"
-
-    - name: Wait for the hosts to be ready
-      rhpds.assisted_installer.wait_for_hosts:
-        cluster_id: "{{ cluster_id }}"
-        offline_token: "{{ rh_console_offline_token }}"
-        expected_hosts: "{{ groups[nodes_group] | length }}"
-        wait_timeout: 300  # Usually ready in 3 - 4 minutes with "full" discovery ISO.
-      register: wait_for_hosts
-      until: wait_for_hosts.result.status == "ready"
-      retries: 3  # On the off chance that the request fails.
-
-    - name: Start cluster installation
-      rhpds.assisted_installer.install_cluster:
-        cluster_id: "{{ cluster_id }}"
-        offline_token: "{{ rh_console_offline_token }}"
-        wait_timeout: 1200
-
-    - name: Obtain OpenShift cluster credentials
-      register: credentials
-      rhpds.assisted_installer.get_credentials:
-        cluster_id: "{{ cluster_id }}"
-        offline_token: "{{ rh_console_offline_token }}"
-
-    - name: Display credentials
-      ansible.builtin.debug:
-        var: credentials.result
+        msg:
+          - "Assisted Installer: https://console.redhat.com/openshift/assisted-installer/clusters/{{ cluster_id }}"
+          - "ISO downloaded to desktop-nick: /tmp/{{ cluster_name }}-{{ cluster_id }}-discovery.iso"
+          - "Write the ISO to USB, boot each node, then run baremetal-ocp-install.yml"
 
   handlers:
     - name: Reload BIND9  # noqa: run-once[task]
