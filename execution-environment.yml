@@ -11,4 +11,8 @@ dependencies:
     - proxmoxer>=2.0.0
     - requests
   system:
-    - git  # required for git+https collection installs
+    - git
+
+additional_build_steps:
+  prepend_galaxy:
+    - RUN microdnf install -y git
