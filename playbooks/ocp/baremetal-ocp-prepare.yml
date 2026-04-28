@@ -1,15 +1,13 @@
 ---
-- name: Set Up cluster
-  hosts: ms-ocp-clusters
+# Stage 1 of 2: Create cluster record, configure DNS/DHCP, and download Discovery ISO.
+# After this playbook completes, write the ISO to USB and boot each bare-metal node.
+# Then run baremetal-ocp-install.yml to wait for host discovery and install the cluster.
+- name: Prepare bare-metal OCP cluster
+  hosts: baremetal-ocp-clusters
   gather_facts: false  # Hosts aren't available, since this playbook creates them.
 
   vars:
     recreate: false
-    pve_api: &pve_api
-      api_user: "{{ pve_api_user }}"
-      api_token_id: "{{ pve_api_token_id }}"
-      api_token_secret: "{{ pve_api_token_secret }}"
-      api_host: "{{ pve_api_host }}"
 
   tasks:
     - name: Assisted Installer
@@ -29,17 +27,17 @@
           loop: "{{ listclusters.result | selectattr('name', 'equalto', cluster_name) | list }}"
           loop_control:
             label: "{{ item.name }}, {{ item.id }}"
-          when: recreate
+          when: recreate | bool
 
         - name: Delete Existing Discovery ISOs
           ansible.builtin.file:
-            path: "/mnt/pve/storage-pve/template/iso/{{ cluster_name }}-{{ item.id }}-discovery.iso"
+            path: "/tmp/{{ cluster_name }}-{{ item.id }}-discovery.iso"
             state: absent
           loop: "{{ listclusters.result | selectattr('name', 'equalto', cluster_name) | list }}"
           loop_control:
             label: "{{ item.name }}, {{ item.id }}"
-          when: recreate
-          delegate_to: "{{ groups['pvems-nodes'][1] }}"  # Pick a host from the hypervisor group
+          when: recreate | bool
+          delegate_to: "desktop-nick.home.morey.tech"  # Pick a host from the hypervisor group
 
         - name: Set cluster_id to existing installer
           ansible.builtin.set_fact:
@@ -64,21 +62,17 @@
             ingress_vips: "{{ ingress_vips if groups[nodes_group] | length >= 3 else [] }}"
             ssh_public_key: "{{ ssh_authorized_keys }}"
           register: newcluster
-          when: not cluster_id is defined or recreate
+          when: not cluster_id is defined or recreate | bool
 
         - name: Set cluster_id to new installer
           ansible.builtin.set_fact:
             cluster_id: "{{ newcluster.result.id }}"
-          when: not cluster_id is defined or recreate
+          when: not cluster_id is defined or recreate | bool
 
         # debug cluster_id
         - name: Print selected cluster_id
           ansible.builtin.debug:
             msg: "{{ cluster_id }}"
-
-        - name: Print link to assisted installer
-          ansible.builtin.debug:
-            msg: "https://console.redhat.com/openshift/assisted-installer/clusters/{{ cluster_id }}"
 
     - name: Create DHCP static mapping
       pfsensible.core.pfsense_dhcp_static:
@@ -124,7 +118,7 @@
 
         - name: Configure DNS zone
           ansible.builtin.template:
-            src: "{{ playbook_dir }}/roles/dns_server/templates/db.j2"
+            src: "{{ playbook_dir }}/../../roles/dns_server/templates/db.j2"
             dest: "/etc/bind/db.{{ cluster_name }}.{{ cluster_dns_zone }}"
             mode: '0644'
           notify: Reload BIND9
@@ -137,98 +131,36 @@
               { 'name': '*.apps', 'ip': ingress_vips.0.ip if groups[nodes_group] | length > 1 else hostvars[groups[nodes_group][0]].ip_address }] }}"
             dns_ip_address: "{{ hostvars['dns.rh-lab.morey.tech'].ip_address }}"
 
-    - name: Proxmox Configuration
-      tags: proxmox
-      block:
-        - name: Create new PVE pool
-          community.proxmox.proxmox_pool:
-            <<: *pve_api
-            poolid: "{{ cluster_name }}"
-            comment: "{{ cluster_name }} cluster"
+    # Flush dns handler
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
 
-        - name: Check if VM exists
-          community.proxmox.proxmox_vm_info:
-            <<: *pve_api
-            vmid: "{{ hostvars[item].pve_vm_id }}"
-            name: "{{ hostvars[item].inventory_hostname_short }}"
-            node: "{{ hostvars[item].pve_node }}"
-            config: current
-          loop: "{{ groups[nodes_group] }}"
-          loop_control:
-            label: "{{ hostvars[item].inventory_hostname_short }}"
-          register: vm_states
+    - name: Create Discovery ISO
+      rhpds.assisted_installer.create_infra_env:
+        name: "{{ cluster_name }}-infra-env"
+        image_type: "{{ image_type }}"
+        cluster_id: "{{ cluster_id }}"
+        ssh_authorized_key: "{{ ssh_authorized_keys }}"
+        offline_token: "{{ rh_console_offline_token }}"
+        pull_secret: "{{ rh_console_pull_secret | to_json }}"
+        openshift_version: "{{ cluster_version }}"
+        static_network_config: "{{ static_network_config }}"
+      register: newinfraenv
 
-        # debug vm_states
-        - name: Set proxmox_vms fact
-          ansible.builtin.set_fact:
-            proxmox_vms: "{{ vm_states.results[0].proxmox_vms }}"
+    - name: Download Discovery ISO to desktop-nick
+      ansible.builtin.get_url:
+        url: "{{ newinfraenv.result.download_url }}"
+        dest: "/tmp/{{ cluster_name }}-{{ cluster_id }}-discovery.iso"
+        mode: '0777'
+        force: true
+      delegate_to: "desktop-nick.home.morey.tech"  # Pick a host from the hypervisor group
 
-        # Stop with force first before destroy to speed up.
-        - name: Stop Existing VMs To Prepare for Deletion # noqa: run-once[task]
-          community.proxmox.proxmox_kvm:
-            <<: *pve_api
-            vmid: "{{ item.vmid }}"
-            name: "{{ item.name }}"
-            node: "{{ item.node }}"
-            state: stopped
-            force: true
-            timeout: 15  # short graceful shutdown since will be destroyed.
-          loop: "{{ proxmox_vms }}"
-          loop_control:
-            label: "{{ item.name }}"
-          when: recreate
-
-        # Stop with force first before destroy to speed up.
-        - name: Delete Existing VMs
-          community.proxmox.proxmox_kvm:
-            <<: *pve_api
-            vmid: "{{ item.vmid }}"
-            name: "{{ item.name }}"
-            node: "{{ item.node }}"
-            state: absent
-          loop: "{{ proxmox_vms }}"
-          loop_control:
-            label: "{{ item.name }}"
-          when: recreate
-
-        - name: Create VMs
-          community.proxmox.proxmox_kvm:
-            <<: *pve_api
-            vmid: "{{ hostvars[item].pve_vm_id }}"
-            name: "{{ hostvars[item].inventory_hostname_short }}"
-            node: "{{ hostvars[item].pve_node }}"
-            pool: "{{ cluster_name }}"
-            cpu: x86-64-v2-AES
-            cores: "{{ hostvars[item].cores }}"
-            memory: "{{ hostvars[item].memory }}"
-            scsihw: virtio-scsi-single
-            scsi:
-              scsi0: 'local-nvme:128,iothread=1'
-            net:
-              net0: 'virtio={{ hostvars[item].mac_address }},bridge=vmbr0,tag={{ hostvars[item].vlan_tag }},firewall=1'
-            # update: true  # Doesn't work if VM already exists.
-          loop: "{{ groups[nodes_group] }}"
-          loop_control:
-            label: "{{ hostvars[item].inventory_hostname_short }}"
-          register: vm_create
-          # "msg": "VM ocp-lab-01 with vmid 6101 updated",  == already exists, maybe updated
-          # "msg": "VM ocp-lab-01 with vmid 6101 deployed", == create
-
-    - name: Configure Discovery ISO  # noqa: no-handler
-      ansible.builtin.include_tasks:
-        file: "{{ playbook_dir }}/roles/ocp_assisted_installer/tasks/discovery-iso.yml"
-        apply:
-          tags: assisted_installer
-      when: vm_create is defined and vm_create.changed
-      tags: assisted_installer
-
-    - name: Install Cluster  # noqa: no-handler
-      ansible.builtin.include_tasks:
-        file: "{{ playbook_dir }}/roles/ocp_assisted_installer/tasks/install-cluster.yml"
-        apply:
-          tags: assisted_installer
-      when: vm_create is defined and vm_create.changed
-      tags: assisted_installer
+    - name: Print next steps
+      ansible.builtin.debug:
+        msg:
+          - "Assisted Installer: https://console.redhat.com/openshift/assisted-installer/clusters/{{ cluster_id }}"
+          - "ISO downloaded to desktop-nick: /tmp/{{ cluster_name }}-{{ cluster_id }}-discovery.iso"
+          - "Write the ISO to USB, boot each node, then run baremetal-ocp-install.yml"
 
   handlers:
     - name: Reload BIND9  # noqa: run-once[task]

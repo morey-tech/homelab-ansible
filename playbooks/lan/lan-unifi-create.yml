@@ -217,7 +217,7 @@
 
     - name: Deploy Cloudflare credentials file
       ansible.builtin.template:
-        src: cloudflare-credentials.ini.j2
+        src: "{{ playbook_dir }}/../../templates/cloudflare-credentials.ini.j2"
         dest: /etc/letsencrypt/cloudflare-credentials.ini
         mode: '0600'
         owner: root
@@ -225,7 +225,7 @@
 
     - name: Deploy certificate import script
       ansible.builtin.template:
-        src: unifi-cert-import.sh.j2
+        src: "{{ playbook_dir }}/../../templates/unifi-cert-import.sh.j2"
         dest: /usr/local/bin/unifi-cert-import.sh
         mode: '0700'
         owner: root
@@ -240,7 +240,7 @@
 
     - name: Deploy certbot renewal hook
       ansible.builtin.template:
-        src: unifi-certbot-deploy-hook.sh.j2
+        src: "{{ playbook_dir }}/../../templates/unifi-certbot-deploy-hook.sh.j2"
         dest: /etc/letsencrypt/renewal-hooks/deploy/unifi-cert-import.sh
         mode: '0700'
         owner: root

@@ -64,7 +64,7 @@
 
     - name: Copy monitoring stack configuration files
       ansible.builtin.copy:
-        src: files/monitoring/
+        src: "{{ playbook_dir }}/../../files/monitoring/"
         dest: /opt/monitoring/
         mode: '0644'
       register: monitoring_files

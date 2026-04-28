@@ -83,7 +83,7 @@
 
     - name: Configure BIND9 options
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/roles/dns_server/templates/named.conf.options.j2"
+        src: "{{ playbook_dir }}/../../roles/dns_server/templates/named.conf.options.j2"
         dest: /etc/bind/named.conf.options
         mode: '0644'
       notify: Reload BIND9
@@ -105,7 +105,7 @@
 
     - name: Configure rh-lab DNS zone  # noqa: run-once[task]
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/roles/dns_server/templates/db.j2"
+        src: "{{ playbook_dir }}/../../roles/dns_server/templates/db.j2"
         dest: "/etc/bind/db.{{ cluster_dns_zone }}"
         mode: '0644'
       notify: Reload BIND9

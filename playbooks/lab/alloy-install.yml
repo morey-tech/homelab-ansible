@@ -79,7 +79,7 @@
 
     - name: Render Alloy configuration
       ansible.builtin.template:
-        src: config.alloy.j2
+        src: "{{ playbook_dir }}/../../templates/config.alloy.j2"
         dest: /etc/alloy/config.alloy
         mode: '0644'
       notify:
