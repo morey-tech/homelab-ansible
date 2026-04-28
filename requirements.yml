@@ -17,3 +17,5 @@ collections:
   # renovate: datasource=github-tags depName=morey-tech/pfsensible-haproxy
   - name: git+https://github.com/morey-tech/pfsensible-haproxy.git
     version: 0.2.0
+  - name: infra.aap_configuration
+    version: ">=2.0.0"

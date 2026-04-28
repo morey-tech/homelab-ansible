@@ -1,0 +1,6 @@
+---
+# Managed by infra.aap_configuration gateway_organizations role via dispatch.
+# AAP 2.5+: use aap_organizations (gateway API), not controller_organizations.
+aap_organizations:
+  - name: morey-tech
+    description: Morey Tech homelab organization

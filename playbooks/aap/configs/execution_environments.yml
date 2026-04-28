@@ -1,0 +1,7 @@
+---
+# Managed by infra.aap_configuration controller_execution_environments role via dispatch.
+controller_execution_environments:
+  - name: ee-homelab
+    image: ghcr.io/morey-tech/homelab-ansible/ee-homelab:latest
+    organization: morey-tech
+    pull: missing

@@ -1,0 +1,17 @@
+---
+- name: Configure Ansible Automation Platform
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Load AAP configuration from configs directory
+      ansible.builtin.include_vars:
+        dir: configs/
+        extensions:
+          - yml
+          - yaml
+
+    - name: Apply AAP configuration via dispatch role
+      ansible.builtin.include_role:
+        name: infra.aap_configuration.dispatch

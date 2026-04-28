@@ -1,0 +1,16 @@
+---
+# Managed by infra.aap_configuration controller_projects role via dispatch.
+controller_projects:
+  - name: homelab-ansible-aap
+    description: >-
+      GitOps self-configuration project. Syncs playbooks/aap/ from
+      homelab-ansible to manage AAP configuration.
+    organization: morey-tech
+    scm_type: git
+    scm_url: "{{ aap_self_scm_url }}"
+    scm_branch: main
+    scm_subdir: playbooks/aap
+    scm_clean: false
+    scm_delete_on_update: false
+    scm_update_on_launch: true
+    credential: "{{ aap_self_scm_credential | default(omit) }}"

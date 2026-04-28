@@ -4,3 +4,9 @@
 
 prom_host: monitoring.lab.morey.tech:9090
 loki_host: monitoring.lab.morey.tech:3100
+
+# AAP connection settings (used by playbooks/aap/configure-aap.yml)
+# aap_token is vault-managed — add it via: ansible-vault edit group_vars/all/vault.yml
+aap_hostname: https://aap-aap.apps.ocp-gpu.rh-lab.morey.tech
+aap_validate_certs: true
+aap_self_scm_url: https://github.com/morey-tech/homelab-ansible.git
