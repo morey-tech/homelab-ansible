@@ -122,4 +122,4 @@
   handlers:
     - name: Update Cloud-Init Disk
       # Handlers don't support blocks, include tasks instead.
-      ansible.builtin.include_tasks: ./handlers/update-cloud-init-disk.yml
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/roles/ms_create_vm/tasks/update-cloud-init-disk.yml"
