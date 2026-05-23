@@ -15,7 +15,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/homelab-ansible/ee-homelab
+  IMAGE_NAME: ${{ github.repository_owner }}/homelab-ansible/ee
 
 jobs:
   build:
