@@ -1,0 +1,7 @@
+---
+# No production addressing is activated by this phase, even with this flag true.
+network_services_cutover_enabled: false
+network_services_hostname: "network-services"
+network_services_parent_interface: ""
+network_services_vlan3_address: 192.168.3.17/24
+network_services_vlan6_address: 192.168.6.17/24
