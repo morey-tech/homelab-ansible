@@ -3,6 +3,7 @@ network_services:
   hosts:
     network-services:
       ansible_host: 192.168.1.17
+      network_services_firewall_zone: ns-native
       network_services_ssh_user: morey-tech
       ansible_user: "{{ network_services_ssh_user }}"
 
