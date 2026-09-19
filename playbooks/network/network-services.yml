@@ -32,3 +32,155 @@
       loop:
         - qemu-guest-agent
         - firewalld
+
+    # https://blog.technitium.com/2017/11/running-dns-server-on-ubuntu-linux.html
+    - name: Install Technitium DNS Server dependencies
+      ansible.builtin.dnf:
+        name:
+          - aspnetcore-runtime-10.0
+          - libicu
+          - tar
+          - gzip
+          - python3-firewall
+        state: present
+
+    - name: Create Technitium DNS Server group
+      ansible.builtin.group:
+        name: dns-server
+        system: true
+
+    - name: Create Technitium DNS Server user
+      ansible.builtin.user:
+        name: dns-server
+        group: dns-server
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+
+    - name: Create Technitium DNS Server directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: dns-server
+        group: dns-server
+        mode: "0750"
+      loop:
+        - /opt/technitium/dns
+        - /etc/dns
+        - /var/log/technitium/dns
+
+    - name: Install Technitium DNS Server portable app
+      ansible.builtin.unarchive:
+        src: https://download.technitium.com/dns/DnsServerPortable.tar.gz
+        dest: /opt/technitium/dns
+        remote_src: true
+        owner: dns-server
+        group: dns-server
+        creates: /opt/technitium/dns/DnsServerApp.dll
+      notify: Restart Technitium DNS Server
+
+    - name: Install Technitium DNS Server systemd unit
+      ansible.builtin.copy:
+        src: /opt/technitium/dns/systemd.service
+        dest: /etc/systemd/system/dns.service
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Technitium DNS Server
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    # Keep systemd-resolved available for host lookups, while freeing port 53.
+    - name: Configure systemd-resolved to use upstream resolvers without a stub listener
+      when:
+        - "'systemd-resolved.service' in ansible_facts.services"
+        - ansible_facts.services['systemd-resolved.service'].state == 'running'
+      block:
+        - name: Create systemd-resolved configuration directory
+          ansible.builtin.file:
+            path: /etc/systemd/resolved.conf.d
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Disable systemd-resolved stub listener
+          ansible.builtin.copy:
+            dest: /etc/systemd/resolved.conf.d/technitium.conf
+            content: |
+              [Resolve]
+              DNSStubListener=no
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Restart systemd-resolved
+
+        - name: Inspect host resolver configuration
+          ansible.builtin.stat:
+            path: /etc/resolv.conf
+            follow: false
+          register: network_services_resolv_conf
+
+        - name: Point host resolver at systemd-resolved upstream resolver list
+          ansible.builtin.file:
+            src: /run/systemd/resolve/resolv.conf
+            dest: /etc/resolv.conf
+            state: link
+            force: true
+          when:
+            - network_services_resolv_conf.stat.islnk | default(false)
+            - network_services_resolv_conf.stat.lnk_source == '/run/systemd/resolve/stub-resolv.conf'
+
+    - name: Apply resolver and DNS service changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start Technitium DNS Server
+      ansible.builtin.systemd_service:
+        name: dns.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Allow DNS and Technitium web console through the configured firewall zone
+      ansible.posix.firewalld:
+        zone: "{{ network_services_firewall_zone | default(omit) }}"
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - 53/udp
+        - 53/tcp
+        - 5380/tcp
+
+    - name: Wait for Technitium web console
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 5380
+        timeout: 60
+      delegate_to: localhost
+      become: false
+      when: not ansible_check_mode
+
+    - name: Wait for Technitium DNS TCP listener
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 53
+        timeout: 60
+      delegate_to: localhost
+      become: false
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart systemd-resolved
+      ansible.builtin.systemd_service:
+        name: systemd-resolved.service
+        state: restarted
+
+    - name: Restart Technitium DNS Server
+      ansible.builtin.systemd_service:
+        name: dns.service
+        state: restarted
+        daemon_reload: true
