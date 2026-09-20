@@ -17,11 +17,30 @@
     - not ansible_check_mode
     - technitium_api_bootstrap_interactive | default(true) | bool
   block:
+    - name: Check whether trusted HTTPS is already available for API token setup
+      ansible.builtin.uri:
+        url: "https://{{ technitium_web_domain }}:{{ technitium_web_tls_port }}/"
+        validate_certs: true
+        use_proxy: false
+        timeout: 5
+      delegate_to: localhost
+      become: false
+      register: technitium_bootstrap_https
+      failed_when: false
+      when: technitium_web_tls_enabled | default(false) | bool
+
+    - name: Select the available web console URL for API token setup
+      ansible.builtin.set_fact:
+        technitium_bootstrap_url: >-
+          {{ ('https://' ~ technitium_web_domain ~ ':' ~ (technitium_web_tls_port | string) ~ '/')
+             if technitium_bootstrap_https.status | default(0) == 200
+             else ('http://' ~ ansible_host ~ ':5380/') }}
+
     - name: Wait for the administrator to save an API token in Vault
       ansible.builtin.pause:
         prompt: |
           Technitium is installed, but the API token is missing or rejected.
-          1. Open http://{{ ansible_host }}:5380/ and log in. Change the default password on a fresh install.
+          1. Open {{ technitium_bootstrap_url }} and log in. Change the default password on a fresh install.
           2. Create an API token named homelab-ansible for an administrator or automation user.
              Required permissions: Settings View/Modify; Apps View/Modify/Delete;
              Allowed View/Modify/Delete; Zones View/Modify and View/Modify on managed zones.

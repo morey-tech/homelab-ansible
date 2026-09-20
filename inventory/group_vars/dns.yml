@@ -74,3 +74,9 @@ technitium_blocklist_urls:
   - https://adguardteam.github.io/HostlistsRegistry/assets/filter_30.txt
   # AdGuard DNS filter
   - https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt
+
+# Native web console HTTPS; DNS validation uses the existing Cloudflare provider.
+technitium_web_tls_enabled: true
+technitium_web_domain: "{{ inventory_hostname }}.home.morey.tech"
+technitium_web_tls_port: 53443
+technitium_certbot_email: info+dns.home@morey.tech

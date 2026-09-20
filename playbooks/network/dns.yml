@@ -238,6 +238,12 @@
         - technitium_test
         - technitium_forwarding
         - technitium_api_auth
+        - technitium_web_tls
+
+    - name: Configure the Technitium web console certificate
+      ansible.builtin.import_tasks: tasks/technitium-web-certificate.yml
+      when: technitium_web_tls_enabled | bool
+      tags: [technitium_config, technitium_web_tls]
 
     - name: Configure Technitium upstream DNS
       ansible.builtin.import_tasks: tasks/technitium-forwarders.yml
