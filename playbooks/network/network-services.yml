@@ -69,15 +69,9 @@
         - /etc/dns
         - /var/log/technitium/dns
 
-    - name: Install Technitium DNS Server portable app
-      ansible.builtin.unarchive:
-        src: https://download.technitium.com/dns/DnsServerPortable.tar.gz
-        dest: /opt/technitium/dns
-        remote_src: true
-        owner: dns-server
-        group: dns-server
-        creates: /opt/technitium/dns/DnsServerApp.dll
-      notify: Restart Technitium DNS Server
+    - name: Install or upgrade the pinned Technitium version
+      ansible.builtin.import_tasks: tasks/technitium-install.yml
+      tags: technitium_upgrade
 
     - name: Install Technitium DNS Server systemd unit
       ansible.builtin.copy:

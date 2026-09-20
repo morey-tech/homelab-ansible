@@ -1,0 +1,153 @@
+---
+- name: Inspect installed Technitium version metadata
+  ansible.builtin.stat:
+    path: /opt/technitium/dns/DnsServerApp.deps.json
+  register: technitium_installed_metadata
+
+- name: Read installed Technitium metadata
+  ansible.builtin.slurp:
+    src: /opt/technitium/dns/DnsServerApp.deps.json
+  register: technitium_installed_deps
+  when: technitium_installed_metadata.stat.exists
+
+- name: Determine the installed Technitium version
+  ansible.builtin.set_fact:
+    technitium_installed_version: >-
+      {{ ((technitium_installed_deps.content | b64decode | from_json).libraries
+          | select('match', '^DnsServerApp/') | first).split('/')[1]
+         if technitium_installed_metadata.stat.exists else '0.0' }}
+
+- name: Determine whether Technitium needs installation or upgrade
+  ansible.builtin.set_fact:
+    technitium_install_required: "{{ technitium_installed_version is version(technitium_version, '<') }}"
+
+- name: Report pending Technitium version change in check mode
+  ansible.builtin.debug:
+    msg: "Technitium would change from {{ technitium_installed_version }} to {{ technitium_version }}."
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - technitium_install_required
+
+- name: Install the verified Technitium release
+  when:
+    - technitium_install_required
+    - not ansible_check_mode
+  block:
+    - name: Create protected archive and backup directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop:
+        - /var/cache/technitium
+        - /var/backups/technitium
+
+    - name: Download the checksum-pinned portable archive
+      ansible.builtin.get_url:
+        url: "{{ technitium_archive_url }}"
+        dest: "/var/cache/technitium/DnsServerPortable-{{ technitium_version }}.tar.gz"
+        checksum: "{{ technitium_archive_checksum }}"
+        owner: root
+        group: root
+        mode: "0600"
+        timeout: 120
+
+    - name: Read version metadata from the archive before stopping DNS
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -xOf
+          - "/var/cache/technitium/DnsServerPortable-{{ technitium_version }}.tar.gz"
+          - DnsServerApp.deps.json
+      register: technitium_archive_deps
+      changed_when: false
+
+    - name: Verify the archive contains the requested version
+      ansible.builtin.assert:
+        that:
+          - "('DnsServerApp/' ~ technitium_version) in (technitium_archive_deps.stdout | from_json).libraries"
+        fail_msg: The archive does not contain the pinned version; the running service has not been stopped.
+
+    - name: Back up and replace Technitium while stopped
+      block:
+        - name: Stop existing Technitium for a consistent backup
+          ansible.builtin.systemd_service:
+            name: dns.service
+            state: stopped
+          when: technitium_installed_metadata.stat.exists
+
+        - name: Allocate a unique protected backup directory
+          ansible.builtin.tempfile:
+            state: directory
+            path: /var/backups/technitium
+            prefix: "before-{{ technitium_installed_version }}-to-{{ technitium_version }}-"
+          register: technitium_backup_directory
+          when: technitium_installed_metadata.stat.exists
+
+        - name: Back up existing binaries configuration apps and service unit
+          ansible.builtin.command:
+            argv:
+              - tar
+              - -czf
+              - "{{ technitium_backup_directory.path }}/technitium.tar.gz"
+              - -C
+              - /
+              - opt/technitium/dns
+              - etc/dns
+              - etc/systemd/system/dns.service
+            creates: "{{ technitium_backup_directory.path }}/technitium.tar.gz"
+          when: technitium_installed_metadata.stat.exists
+
+        - name: Restrict access to the backup archive
+          ansible.builtin.file:
+            path: "{{ technitium_backup_directory.path }}/technitium.tar.gz"
+            owner: root
+            group: root
+            mode: "0600"
+          when: technitium_installed_metadata.stat.exists
+
+        - name: Extract the verified portable release
+          ansible.builtin.unarchive:
+            src: "/var/cache/technitium/DnsServerPortable-{{ technitium_version }}.tar.gz"
+            dest: /opt/technitium/dns
+            remote_src: true
+            owner: dns-server
+            group: dns-server
+
+        - name: Update the existing service unit from the release
+          ansible.builtin.copy:
+            src: /opt/technitium/dns/systemd.service
+            dest: /etc/systemd/system/dns.service
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0644"
+          when: technitium_installed_metadata.stat.exists
+
+      always:
+        - name: Start existing Technitium after the upgrade attempt
+          ansible.builtin.systemd_service:
+            name: dns.service
+            state: started
+            daemon_reload: true
+          when: technitium_installed_metadata.stat.exists
+
+    - name: Verify the upgraded web console responds
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/
+        use_proxy: false
+      register: technitium_upgrade_http
+      until: technitium_upgrade_http.status | default(0) == 200
+      retries: 12
+      delay: 5
+      when: technitium_installed_metadata.stat.exists
+
+    - name: Verify the upgraded DNS listener
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 53
+        timeout: 60
+      when: technitium_installed_metadata.stat.exists
