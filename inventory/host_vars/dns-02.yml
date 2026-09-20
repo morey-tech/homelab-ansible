@@ -1,0 +1,6 @@
+---
+# Reserved host variables only: dns-02 is deliberately absent from active inventory.
+# Before enabling the Pi, confirm OS/package support and set its actual NetworkManager
+# dns_parent_interface and dns_native_connection. Do not copy the VM's interface name.
+dns_address_octet: 54
+dns_is_vm: false

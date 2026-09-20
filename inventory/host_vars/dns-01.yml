@@ -1,0 +1,5 @@
+---
+dns_address_octet: 53
+dns_is_vm: true
+dns_parent_interface: enp1s0
+dns_native_connection: Wired connection 1
