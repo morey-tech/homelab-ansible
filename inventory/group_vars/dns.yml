@@ -1,6 +1,6 @@
 ---
-# Enable only after AdGuard at 192.168.3.53 has been shut down.
-dns_cutover_enabled: false
+# Cutover is staged: shut down the old AdGuard host before applying networking.
+dns_cutover_enabled: true
 dns_hostname: "{{ inventory_hostname }}"
 dns_native_address: "192.168.1.{{ dns_address_octet }}/24"
 dns_native_gateway: 192.168.1.1
