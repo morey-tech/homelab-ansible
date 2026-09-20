@@ -1,0 +1,178 @@
+---
+# Runs on the primary after technitium-api-auth.yml has loaded encrypted credentials.
+- name: Require Cloudflare DNS validation credentials
+  ansible.builtin.assert:
+    that:
+      - technitium_cloudflare_token | length > 0
+    fail_msg: >-
+      Set cloudflare_dns_edit_api_token in
+      playbooks/network/vars/technitium-credentials.vault.yml using ansible-vault edit,
+      or inject cloudflare_dns_edit_api_token with an AAP credential.
+    quiet: true
+  vars:
+    technitium_cloudflare_token: >-
+      {{ cloudflare_dns_edit_api_token |
+         default(technitium_credentials.cloudflare_dns_edit_api_token | default(''), true) }}
+
+- name: Install Certbot and the Cloudflare DNS plugin
+  ansible.builtin.dnf:
+    name:
+      - certbot
+      - python3-certbot-dns-cloudflare
+      - openssl
+    state: present
+
+- name: Create protected certificate credentials directory
+  ansible.builtin.file:
+    path: /etc/letsencrypt
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy Cloudflare DNS credentials
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/technitium-cloudflare.ini
+    content: |
+      # Managed by Ansible
+      dns_cloudflare_api_token = {{ cloudflare_dns_edit_api_token | default(technitium_credentials.cloudflare_dns_edit_api_token | default(''), true) }}
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+
+- name: Create the Certbot deploy hooks directory
+  ansible.builtin.file:
+    path: /etc/letsencrypt/renewal-hooks/deploy
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the Technitium certificate conversion hook
+  ansible.builtin.template:
+    src: technitium-cert-deploy.sh.j2
+    dest: /etc/letsencrypt/renewal-hooks/deploy/technitium-webui
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Obtain the web console certificate using Cloudflare DNS validation
+  ansible.builtin.command:
+    argv:
+      - certbot
+      - certonly
+      - --dns-cloudflare
+      - --dns-cloudflare-credentials
+      - /etc/letsencrypt/technitium-cloudflare.ini
+      - --dns-cloudflare-propagation-seconds
+      - "60"
+      - --email
+      - "{{ technitium_certbot_email }}"
+      - --agree-tos
+      - --non-interactive
+      - --cert-name
+      - "{{ technitium_web_domain }}"
+      - --domain
+      - "{{ technitium_web_domain }}"
+    creates: "/etc/letsencrypt/live/{{ technitium_web_domain }}/fullchain.pem"
+
+# Also repairs a missing/stale PFX if a previous deploy hook failed.
+- name: Deploy the current certificate in Technitium PKCS12 format
+  ansible.builtin.command:
+    argv: [/etc/letsencrypt/renewal-hooks/deploy/technitium-webui]
+  register: technitium_certificate_deploy
+  changed_when: "'Certificate deployed' in technitium_certificate_deploy.stdout"
+  when: not ansible_check_mode
+
+- name: Enforce web certificate ownership and permissions
+  ansible.builtin.file:
+    path: /etc/dns/webui.pfx
+    owner: root
+    group: dns-server
+    mode: "0640"
+  when: not ansible_check_mode
+
+- name: Enable Fedora's automatic certificate renewal timer
+  ansible.builtin.systemd_service:
+    name: certbot-renew.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Read current web console settings
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/settings/get
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    use_proxy: false
+  register: technitium_web_settings
+  check_mode: false
+  no_log: true
+  failed_when: technitium_web_settings.json.status | default('error') != 'ok'
+
+- name: Compare web console HTTPS configuration
+  ansible.builtin.set_fact:
+    technitium_web_tls_changed: >-
+      {{ not technitium_web_settings.json.response.webServiceEnableTls or
+         technitium_web_settings.json.response.webServiceTlsPort != technitium_web_tls_port | int or
+         technitium_web_settings.json.response.webServiceTlsCertificatePath != '/etc/dns/webui.pfx' or
+         technitium_web_settings.json.response.webServiceUseSelfSignedTlsCertificate or
+         technitium_web_settings.json.response.webServiceHttpToTlsRedirect or
+         technitium_web_settings.json.response.webServiceTlsCertificatePassword | default('', true) | length > 0 }}
+  no_log: true
+
+- name: Report pending web console HTTPS changes
+  ansible.builtin.debug:
+    msg: Technitium web console HTTPS settings would change.
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - technitium_web_tls_changed
+
+- name: Configure native HTTPS for the Technitium web console
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/settings/set
+    method: POST
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    body_format: form-urlencoded
+    body:
+      webServiceEnableTls: "true"
+      webServiceTlsPort: "{{ technitium_web_tls_port }}"
+      webServiceTlsCertificatePath: /etc/dns/webui.pfx
+      webServiceTlsCertificatePassword: ""
+      webServiceUseSelfSignedTlsCertificate: "false"
+      # Existing automation uses HTTP on loopback; don't redirect it to an IP TLS URL.
+      webServiceHttpToTlsRedirect: "false"
+    use_proxy: false
+  register: technitium_web_update
+  no_log: true
+  changed_when: true
+  failed_when: technitium_web_update.json.status | default('error') != 'ok'
+  when:
+    - not ansible_check_mode
+    - technitium_web_tls_changed
+
+- name: Allow web console HTTPS on the management network
+  ansible.posix.firewalld:
+    zone: "{{ dns_firewall_zone }}"
+    port: "{{ technitium_web_tls_port }}/tcp"
+    state: enabled
+    permanent: true
+    immediate: true
+
+- name: Verify trusted web console HTTPS from the controller
+  ansible.builtin.uri:
+    url: "https://{{ technitium_web_domain }}:{{ technitium_web_tls_port }}/"
+    validate_certs: true
+    use_proxy: false
+    timeout: 10
+  delegate_to: localhost
+  become: false
+  register: technitium_web_https_test
+  until: technitium_web_https_test.status | default(0) == 200
+  retries: 12
+  delay: 5
+  when: not ansible_check_mode

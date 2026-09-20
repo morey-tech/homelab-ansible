@@ -1,0 +1,31 @@
+#!/bin/sh
+# Managed by Ansible. Certbot calls this after successful renewal.
+set -eu
+umask 077
+lineage={{ ('/etc/letsencrypt/live/' ~ technitium_web_domain) | quote }}
+destination=/etc/dns/webui.pfx
+
+# Ignore renewals for other certificates on this host.
+if [ "${RENEWED_LINEAGE:-$lineage}" != "$lineage" ]; then
+    exit 0
+fi
+
+new_fingerprint=$(openssl x509 -in "$lineage/cert.pem" -noout -fingerprint -sha256)
+if [ -f "$destination" ]; then
+    old_fingerprint=$(openssl pkcs12 -in "$destination" -passin pass: -clcerts -nokeys 2>/dev/null |
+        openssl x509 -noout -fingerprint -sha256 2>/dev/null) || old_fingerprint=
+    if [ "$new_fingerprint" = "$old_fingerprint" ]; then
+        exit 0
+    fi
+fi
+
+temporary=$(mktemp /etc/dns/.webui.pfx.XXXXXX)
+trap 'rm -f "$temporary"' EXIT HUP INT TERM
+openssl pkcs12 -export -out "$temporary" \
+    -inkey "$lineage/privkey.pem" -in "$lineage/cert.pem" \
+    -certfile "$lineage/chain.pem" -passout pass:
+chown root:dns-server "$temporary"
+chmod 0640 "$temporary"
+mv -f "$temporary" "$destination"
+# Technitium watches certificate modification times and reloads automatically.
+echo 'Certificate deployed'
