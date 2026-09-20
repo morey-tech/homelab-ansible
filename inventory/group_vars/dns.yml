@@ -1,24 +1,25 @@
 ---
 # Enable only after AdGuard at 192.168.3.53 has been shut down.
-network_services_cutover_enabled: false
-network_services_hostname: "network-services"
-network_services_parent_interface: enp1s0
-network_services_native_connection: Wired connection 1
-network_services_native_address: 192.168.1.53/24
-network_services_vlans:
+dns_cutover_enabled: false
+dns_hostname: "{{ inventory_hostname }}"
+dns_native_address: "192.168.1.{{ dns_address_octet }}/24"
+dns_native_gateway: 192.168.1.1
+dns_native_resolvers: [192.168.1.1]
+dns_firewall_zone: ns-native
+dns_vlans:
   - id: 3
     connection: LAB
-    address: 192.168.3.53/24
+    address: "192.168.3.{{ dns_address_octet }}/24"
     zone: ns-vlan3
-    enabled: "{{ network_services_cutover_enabled | bool }}"
+    enabled: "{{ dns_cutover_enabled | bool }}"
   - id: 6
     connection: RH_LAB
-    address: 192.168.6.53/24
+    address: "192.168.6.{{ dns_address_octet }}/24"
     zone: ns-vlan6
     enabled: true
   - id: 20
     connection: IOT
-    address: 192.168.20.53/24
+    address: "192.168.20.{{ dns_address_octet }}/24"
     zone: ns-vlan20
     enabled: true
 

@@ -1,0 +1,14 @@
+---
+dns:
+  children:
+    dns_primary:
+      hosts:
+        dns-01:
+          ansible_host: 192.168.1.53
+          mac_address: "52:54:00:98:84:61"
+    # Add dns-02 here only when the Raspberry Pi is ready to provision and join.
+    dns_secondary:
+      hosts: {}
+  vars:
+    ansible_user: morey-tech
+    ansible_ssh_use_tty: false
