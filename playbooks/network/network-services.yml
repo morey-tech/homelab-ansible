@@ -158,6 +158,10 @@
       become: false
       when: not ansible_check_mode
 
+    - name: Configure native and tagged DNS addresses
+      ansible.builtin.import_tasks: tasks/network-addresses.yml
+      tags: network_addresses
+
     - name: Wait for Technitium DNS TCP listener
       ansible.builtin.wait_for:
         host: "{{ ansible_host }}"

@@ -1,10 +1,26 @@
 ---
-# No production addressing is activated by this phase, even with this flag true.
+# Enable only after AdGuard at 192.168.3.53 has been shut down.
 network_services_cutover_enabled: false
 network_services_hostname: "network-services"
-network_services_parent_interface: ""
-network_services_vlan3_address: 192.168.3.17/24
-network_services_vlan6_address: 192.168.6.17/24
+network_services_parent_interface: enp1s0
+network_services_native_connection: Wired connection 1
+network_services_native_address: 192.168.1.53/24
+network_services_vlans:
+  - id: 3
+    connection: LAB
+    address: 192.168.3.53/24
+    zone: ns-vlan3
+    enabled: "{{ network_services_cutover_enabled | bool }}"
+  - id: 6
+    connection: RH_LAB
+    address: 192.168.6.53/24
+    zone: ns-vlan6
+    enabled: true
+  - id: 20
+    connection: IOT
+    address: 192.168.20.53/24
+    zone: ns-vlan20
+    enabled: true
 
 technitium_version: "15.5"
 technitium_archive_url: https://download.technitium.com/dns/DnsServerPortable.tar.gz

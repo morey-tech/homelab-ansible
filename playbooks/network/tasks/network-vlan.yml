@@ -1,0 +1,86 @@
+---
+- name: Read active NetworkManager profile names
+  ansible.builtin.command: nmcli -g NAME connection show --active
+  register: network_services_active_profiles
+  changed_when: false
+  check_mode: false
+
+- name: Read all NetworkManager profile names
+  ansible.builtin.command: nmcli -g NAME connection show
+  register: network_services_all_profiles
+  changed_when: false
+  check_mode: false
+
+- name: Disconnect a VLAN that must remain inactive
+  community.general.nmcli:
+    conn_name: "{{ network_services_vlan.connection }}"
+    state: down
+  when:
+    - not network_services_vlan.enabled | bool
+    - network_services_vlan.connection in network_services_active_profiles.stdout_lines
+
+- name: Configure the tagged VLAN profile
+  community.general.nmcli:
+    conn_name: "{{ network_services_vlan.connection }}"
+    ifname: "{{ network_services_parent_interface }}.{{ network_services_vlan.id }}"
+    type: vlan
+    vlanid: "{{ network_services_vlan.id }}"
+    vlandev: "{{ network_services_parent_interface }}"
+    ip4: ["{{ network_services_vlan.address }}"]
+    method4: manual
+    method6: disabled
+    never_default4: true
+    dns4_ignore_auto: true
+    zone: "{{ network_services_vlan.zone }}"
+    # New profiles remain down until duplicate-address detection is configured.
+    autoconnect: >-
+      {{ network_services_vlan.enabled | bool and
+         network_services_vlan.connection in network_services_all_profiles.stdout_lines }}
+    state: present
+  register: network_services_vlan_profile
+
+- name: Read duplicate-address detection setting
+  ansible.builtin.command:
+    argv: [nmcli, -g, ipv4.dad-timeout, connection, show, "{{ network_services_vlan.connection }}"]
+  register: network_services_vlan_dad
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode or network_services_vlan.connection in network_services_all_profiles.stdout_lines
+
+- name: Enable duplicate-address detection before VLAN activation
+  ansible.builtin.command:
+    argv: [nmcli, connection, modify, "{{ network_services_vlan.connection }}", ipv4.dad-timeout, "3000"]
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - network_services_vlan_dad.stdout != '3000'
+
+- name: Enable autoconnect for a newly created active VLAN
+  ansible.builtin.command:
+    argv: [nmcli, connection, modify, "{{ network_services_vlan.connection }}", connection.autoconnect, "yes"]
+  changed_when: true
+  when:
+    - network_services_vlan.enabled | bool
+    - network_services_vlan.connection not in network_services_all_profiles.stdout_lines
+    - not ansible_check_mode
+
+- name: Activate or reapply an enabled VLAN profile
+  community.general.nmcli:
+    conn_name: "{{ network_services_vlan.connection }}"
+    state: up
+    conn_reload: "{{ network_services_vlan_profile.changed }}"
+  when:
+    - network_services_vlan.enabled | bool
+    - not ansible_check_mode
+
+- name: Read live IPv4 addresses after VLAN configuration
+  ansible.builtin.command: ip -4 -o address show
+  register: network_services_vlan_live
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the VLAN address activation state
+  ansible.builtin.assert:
+    that:
+      - (network_services_vlan.address in network_services_vlan_live.stdout) == (network_services_vlan.enabled | bool)
+  when: not ansible_check_mode
