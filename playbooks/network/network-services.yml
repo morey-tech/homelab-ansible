@@ -177,6 +177,10 @@
       ansible.builtin.import_tasks: tasks/technitium-forwarders.yml
       tags: technitium_config
 
+    - name: Configure searchable Technitium query logs
+      ansible.builtin.import_tasks: tasks/technitium-query-logs.yml
+      tags: [technitium_config, technitium_query_logs]
+
     - name: Configure Technitium block lists
       ansible.builtin.import_tasks: tasks/technitium-blocklists.yml
       tags: technitium_config

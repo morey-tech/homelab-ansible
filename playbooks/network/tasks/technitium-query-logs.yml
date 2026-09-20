@@ -1,0 +1,109 @@
+---
+- name: Require a token for query log configuration
+  ansible.builtin.assert:
+    that:
+      - technitium_api_token | default('') | length > 0
+    fail_msg: Supply a token with Apps View, Modify, and Delete permissions.
+
+- name: Read the compatible DNS app store catalog
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/apps/listStoreApps
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    use_proxy: false
+    timeout: 60
+  register: technitium_app_store
+  check_mode: false
+  no_log: true
+  failed_when: technitium_app_store.json.status | default('error') != 'ok'
+
+- name: Select the SQLite query logging app
+  ansible.builtin.set_fact:
+    technitium_query_log_apps: >-
+      {{ technitium_app_store.json.response.storeApps
+         | selectattr('name', 'equalto', 'Query Logs (Sqlite)') | list }}
+
+- name: Require the query logging app in the server's catalog
+  ansible.builtin.assert:
+    that:
+      - technitium_query_log_apps | length == 1
+    fail_msg: Query Logs (Sqlite) is unavailable in this server's app catalog.
+
+- name: Report pending query log installation in check mode
+  ansible.builtin.debug:
+    msg: Query Logs (Sqlite) would be installed and configured.
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - not technitium_query_log_apps[0].installed
+
+- name: Install the SQLite query logging app
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/apps/downloadAndInstall
+    method: POST
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    body_format: form-urlencoded
+    body:
+      name: Query Logs (Sqlite)
+      url: "{{ technitium_query_log_apps[0].url }}"
+    use_proxy: false
+    timeout: 180
+  register: technitium_query_log_install
+  no_log: true
+  changed_when: true
+  failed_when: technitium_query_log_install.json.status | default('error') != 'ok'
+  when:
+    - not ansible_check_mode
+    - not technitium_query_log_apps[0].installed
+
+- name: Configure the installed query logging app
+  when: not ansible_check_mode or technitium_query_log_apps[0].installed
+  no_log: true
+  diff: false
+  block:
+    - name: Read query log app configuration
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/apps/config/get
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_api_token }}"
+        body_format: form-urlencoded
+        body:
+          name: Query Logs (Sqlite)
+        use_proxy: false
+      register: technitium_query_log_config
+      check_mode: false
+      failed_when: technitium_query_log_config.json.status | default('error') != 'ok'
+
+    - name: Merge managed query log settings
+      ansible.builtin.set_fact:
+        technitium_query_log_desired: >-
+          {{ technitium_query_log_config.json.response.config | from_json
+             | combine(technitium_query_log_settings) }}
+
+    - name: Report pending query log settings in check mode
+      ansible.builtin.debug:
+        msg: Query log settings would change.
+      changed_when: true
+      when:
+        - ansible_check_mode
+        - technitium_query_log_desired != (technitium_query_log_config.json.response.config | from_json)
+
+    - name: Apply query log settings
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/apps/config/set
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_api_token }}"
+        body_format: form-urlencoded
+        body:
+          name: Query Logs (Sqlite)
+          config: "{{ technitium_query_log_desired | to_json }}"
+        use_proxy: false
+      register: technitium_query_log_save
+      changed_when: true
+      failed_when: technitium_query_log_save.json.status | default('error') != 'ok'
+      when:
+        - not ansible_check_mode
+        - technitium_query_log_desired != (technitium_query_log_config.json.response.config | from_json)
