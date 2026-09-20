@@ -7,3 +7,6 @@ roles/*
 !roles/ocp_assisted_installer/
 
 vault-password.txt
+
+# Private migration input; only encrypted Vault output belongs in Git.
+/var/
