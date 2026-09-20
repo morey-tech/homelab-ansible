@@ -261,6 +261,16 @@
         - technitium_test
         - technitium_allowed_test
 
+    - name: Configure Technitium conditional forwarding after exception verification
+      ansible.builtin.include_tasks:
+        file: tasks/technitium-conditional-forwarder.yml
+        apply:
+          tags: [technitium_config, technitium_forwarding]
+      loop: "{{ technitium_conditional_forwarders }}"
+      loop_control:
+        loop_var: technitium_conditional_zone
+      tags: [technitium_config, technitium_forwarding]
+
   handlers:
     - name: Restart systemd-resolved
       ansible.builtin.systemd_service:
