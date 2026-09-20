@@ -1,0 +1,28 @@
+---
+- name: Load encrypted Technitium API credential
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/technitium-credentials.vault.yml"
+    name: technitium_credentials
+  no_log: true
+
+- name: Validate the API token without exposing credentials
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/user/session/get
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    use_proxy: false
+    timeout: 10
+  register: technitium_token_probe
+  check_mode: false
+  no_log: true
+  failed_when: false
+  when: technitium_api_token | default('') | length > 0
+
+- name: Classify the authentication result without logging API responses
+  ansible.builtin.set_fact:
+    technitium_token_state: >-
+      {% if technitium_api_token | default('') | length == 0 %}missing
+      {% elif technitium_token_probe.json.status | default('') == 'ok' %}valid
+      {% elif technitium_token_probe.json.status | default('') == 'invalid-token' %}rejected
+      {% else %}api-error{% endif %}
+  no_log: true

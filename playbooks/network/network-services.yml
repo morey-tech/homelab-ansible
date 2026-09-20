@@ -171,6 +171,17 @@
       become: false
       when: not ansible_check_mode
 
+    - name: Load and validate Technitium API credentials
+      ansible.builtin.import_tasks: tasks/technitium-api-auth.yml
+      tags:
+        - technitium_config
+        - technitium_query_logs
+        - technitium_exceptions
+        - technitium_allowed_test
+        - technitium_test
+        - technitium_forwarding
+        - technitium_api_auth
+
     - name: Configure Technitium upstream DNS
       ansible.builtin.import_tasks: tasks/technitium-forwarders.yml
       tags: technitium_config

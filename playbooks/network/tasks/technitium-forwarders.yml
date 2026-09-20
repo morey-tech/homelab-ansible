@@ -18,7 +18,17 @@
   register: technitium_current_settings
   check_mode: false
   no_log: true
-  failed_when: technitium_current_settings.json.status | default('error') != 'ok'
+  failed_when: false
+
+- name: Require permission to read Technitium settings
+  ansible.builtin.assert:
+    that:
+      - technitium_current_settings.json.status | default('error') == 'ok'
+    fail_msg: >-
+      Technitium settings could not be read. Check that the API token is still
+      valid and its user has Settings View permission. Check the server logs
+      for details; the token and settings response remain hidden.
+    quiet: true
 
 - name: Compare Technitium upstream DNS configuration
   ansible.builtin.set_fact:
