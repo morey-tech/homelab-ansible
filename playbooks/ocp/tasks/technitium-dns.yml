@@ -1,0 +1,67 @@
+---
+- name: Require one configured DNS primary and at least one cluster node
+  ansible.builtin.assert:
+    that:
+      - groups['dns_primary'] | default([]) | length == 1
+      - groups[nodes_group] | length > 0
+    fail_msg: Load inventory/dns.yml and the cluster inventory before managing OCP DNS.
+
+- name: Initialize the OCP primary zone records
+  ansible.builtin.set_fact:
+    technitium_zone_name: "{{ cluster_name }}.{{ cluster_dns_zone }}"
+    technitium_zone_records:
+      - name: "{{ cluster_name }}.{{ cluster_dns_zone }}"
+        type: SOA
+        ttl: "{{ dns_primary_vars.technitium_ocp_record_ttl }}"
+        rData:
+          primaryNameServer: "ns.{{ cluster_name }}.{{ cluster_dns_zone }}"
+          responsiblePerson: "admin.{{ cluster_name }}.{{ cluster_dns_zone }}"
+          serial: 1
+          refresh: "{{ dns_primary_vars.technitium_ocp_soa_refresh }}"
+          retry: "{{ dns_primary_vars.technitium_ocp_soa_retry }}"
+          expire: "{{ dns_primary_vars.technitium_ocp_soa_expire }}"
+          minimum: "{{ dns_primary_vars.technitium_ocp_soa_minimum }}"
+      - name: "{{ cluster_name }}.{{ cluster_dns_zone }}"
+        type: NS
+        ttl: "{{ dns_primary_vars.technitium_ocp_record_ttl }}"
+        rData:
+          nameServer: "ns.{{ cluster_name }}.{{ cluster_dns_zone }}"
+      - name: "ns.{{ cluster_name }}.{{ cluster_dns_zone }}"
+        type: A
+        ttl: "{{ dns_primary_vars.technitium_ocp_record_ttl }}"
+        rData:
+          ipAddress: "{{ dns_primary_vars.technitium_ocp_nameserver_address }}"
+  vars:
+    dns_primary_vars: "{{ hostvars[groups['dns_primary'][0]] }}"
+  no_log: true
+
+- name: Add cluster node A records
+  ansible.builtin.set_fact:
+    technitium_zone_records: >-
+      {{ technitium_zone_records + [{'name': item.split('.')[0] ~ '.' ~ technitium_zone_name,
+         'type': 'A', 'ttl': hostvars[groups['dns_primary'][0]].technitium_ocp_record_ttl,
+         'rData': {'ipAddress': hostvars[item].ip_address}}] }}
+  loop: "{{ groups[nodes_group] }}"
+  no_log: true
+
+- name: Add API and ingress A records
+  ansible.builtin.set_fact:
+    technitium_zone_records: >-
+      {{ technitium_zone_records + [{'name': item.name ~ '.' ~ technitium_zone_name,
+         'type': 'A', 'ttl': hostvars[groups['dns_primary'][0]].technitium_ocp_record_ttl,
+         'rData': {'ipAddress': item.ip}}] }}
+  loop:
+    - name: api
+      ip: "{{ api_vips[0].ip if groups[nodes_group] | length >= 3 else hostvars[groups[nodes_group][0]].ip_address }}"
+    - name: api-int
+      ip: "{{ api_vips[0].ip if groups[nodes_group] | length >= 3 else hostvars[groups[nodes_group][0]].ip_address }}"
+    - name: '*.apps'
+      ip: "{{ ingress_vips[0].ip if groups[nodes_group] | length >= 3 else hostvars[groups[nodes_group][0]].ip_address }}"
+  no_log: true
+
+- name: Configure and verify the OCP zone in Technitium
+  ansible.builtin.include_role:
+    name: technitium_zone
+    apply:
+      tags: dns
+  tags: dns

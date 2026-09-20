@@ -1,0 +1,10 @@
+{% for record in technitium_zone_render_records %}
+{% set data = record.rData %}
+{% if record.type == 'A' %}
+{{ record.name | lower | trim('.') }}. {{ record.ttl }} IN A {{ data.ipAddress }}
+{% elif record.type == 'NS' %}
+{{ record.name | lower | trim('.') }}. {{ record.ttl }} IN NS {{ data.nameServer | lower | trim('.') }}.
+{% elif record.type == 'SOA' %}
+{{ record.name | lower | trim('.') }}. {{ record.ttl }} IN SOA {{ data.primaryNameServer | lower | trim('.') }}. {{ data.responsiblePerson | lower | trim('.') }}. {{ 0 if technitium_zone_compare_serial | default(false) else data.serial }} {{ data.refresh }} {{ data.retry }} {{ data.expire }} {{ data.minimum }}
+{% endif %}
+{% endfor %}

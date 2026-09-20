@@ -1,0 +1,203 @@
+---
+- name: Load zone API authentication
+  ansible.builtin.import_tasks: auth.yml
+
+- name: Manage the primary zone on the designated DNS host
+  delegate_to: "{{ groups['dns_primary'][0] }}"
+  become: true
+  no_log: true
+  diff: false
+  block:
+    - name: Validate the zone record schema
+      ansible.builtin.assert:
+        that:
+          - technitium_zone_name is match('^[a-z0-9][a-z0-9.-]*[a-z0-9]$')
+          - technitium_zone_records | length > 0
+          - technitium_zone_records | map(attribute='type') | difference(['A', 'NS', 'SOA']) | length == 0
+          - technitium_zone_records | selectattr('type', 'equalto', 'SOA') | list | length == 1
+
+    - name: Validate SOA timers and record TTLs before changing the zone
+      ansible.builtin.assert:
+        that:
+          - technitium_zone_records | map(attribute='ttl') | max | int <= technitium_zone_soa.rData.expire | int
+          - technitium_zone_soa.rData.refresh | int <= technitium_zone_soa.rData.expire | int
+          - technitium_zone_soa.rData.retry | int <= technitium_zone_soa.rData.refresh | int
+        fail_msg: Record TTLs and SOA timers must satisfy Technitium's expiry constraints.
+      vars:
+        technitium_zone_soa: "{{ technitium_zone_records | selectattr('type', 'equalto', 'SOA') | first }}"
+
+    - name: Read the target zone list
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/zones/list
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_zone_token }}"
+        body_format: form-urlencoded
+        body:
+          filterName: "{{ technitium_zone_name }}"
+        use_proxy: false
+      register: technitium_zone_list
+      check_mode: false
+      failed_when: technitium_zone_list.json.status | default('error') != 'ok'
+
+    - name: Select the exact primary zone
+      ansible.builtin.set_fact:
+        technitium_zone_matches: "{{ technitium_zone_list.json.response.zones | selectattr('name', 'equalto', technitium_zone_name) | list }}"
+
+    - name: Refuse to replace another zone type or a disabled zone
+      ansible.builtin.assert:
+        that:
+          - >-
+            technitium_zone_matches | length == 0 or
+            (technitium_zone_matches[0].type == 'Primary' and not technitium_zone_matches[0].disabled)
+
+    - name: Read all existing records in the zone
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/zones/records/get
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_zone_token }}"
+        body_format: form-urlencoded
+        body:
+          zone: "{{ technitium_zone_name }}"
+          domain: "{{ technitium_zone_name }}"
+          listZone: "true"
+        use_proxy: false
+      register: technitium_zone_current
+      check_mode: false
+      failed_when: technitium_zone_current.json.status | default('error') != 'ok'
+      when: technitium_zone_matches | length > 0
+
+    - name: Normalize existing records for comparison
+      ansible.builtin.set_fact:
+        technitium_zone_existing_records: "{{ technitium_zone_current.json.response.records if technitium_zone_matches | length > 0 else [] }}"
+
+    - name: Render desired zone records
+      ansible.builtin.set_fact:
+        technitium_zone_import_text: "{{ lookup('ansible.builtin.template', 'records.j2') }}"
+      vars:
+        technitium_zone_render_records: "{{ technitium_zone_records }}"
+
+    - name: Normalize desired records without the server-managed SOA serial
+      ansible.builtin.set_fact:
+        technitium_zone_desired_lines: "{{ (lookup('ansible.builtin.template', 'records.j2') | default('', true)).splitlines() }}"
+      vars:
+        technitium_zone_render_records: "{{ technitium_zone_records }}"
+        technitium_zone_compare_serial: true
+
+    - name: Normalize active existing records without the SOA serial
+      ansible.builtin.set_fact:
+        technitium_zone_existing_lines: "{{ (lookup('ansible.builtin.template', 'records.j2') | default('', true)).splitlines() }}"
+      vars:
+        technitium_zone_render_records: "{{ technitium_zone_existing_records | rejectattr('disabled') | list }}"
+        technitium_zone_compare_serial: true
+
+    - name: Determine whether records need importing
+      ansible.builtin.set_fact:
+        technitium_zone_records_changed: "{{ technitium_zone_desired_lines | difference(technitium_zone_existing_lines) | length > 0 }}"
+
+    - name: Report pending primary zone changes
+      ansible.builtin.debug:
+        msg: Primary zone records would change.
+      changed_when: true
+      when: ansible_check_mode and technitium_zone_records_changed
+
+    - name: Export existing zone before changes
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:5380/api/zones/export?zone={{ technitium_zone_name | urlencode }}"
+        headers:
+          Authorization: "Bearer {{ technitium_zone_token }}"
+        return_content: true
+        use_proxy: false
+      register: technitium_zone_backup
+      failed_when: "technitium_zone_backup.status != 200 or 'text/plain' not in technitium_zone_backup.content_type | default('')"
+      when: not ansible_check_mode and technitium_zone_records_changed and technitium_zone_matches | length > 0
+
+    - name: Create protected DNS record backup directory
+      ansible.builtin.file:
+        path: /var/backups/technitium/records
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: not ansible_check_mode and technitium_zone_records_changed
+
+    - name: Save the previous zone before importing changes
+      ansible.builtin.copy:
+        content: "{{ technitium_zone_backup.content }}"
+        dest: "/var/backups/technitium/records/{{ technitium_zone_name }}.zone"
+        owner: root
+        group: root
+        mode: "0600"
+        backup: true
+      when: not ansible_check_mode and technitium_zone_records_changed and technitium_zone_matches | length > 0
+
+    - name: Create the primary zone when absent
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/zones/create
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_zone_token }}"
+        body_format: form-urlencoded
+        body:
+          zone: "{{ technitium_zone_name }}"
+          type: Primary
+        use_proxy: false
+      register: technitium_zone_create
+      changed_when: true
+      failed_when: technitium_zone_create.json.status | default('error') != 'ok'
+      when: not ansible_check_mode and technitium_zone_matches | length == 0
+
+    - name: Import managed record sets without deleting unrelated records
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:5380/api/zones/import?zone={{ technitium_zone_name | urlencode }}&overwrite=true&overwriteZone=false&overwriteSoaSerial=false
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_zone_token }}"
+          Content-Type: text/plain
+        body: "{{ technitium_zone_import_text }}"
+        use_proxy: false
+      register: technitium_zone_import
+      changed_when: true
+      failed_when: false
+      when: not ansible_check_mode and technitium_zone_records_changed
+
+    - name: Report an unsuccessful import without exposing API credentials or records
+      ansible.builtin.assert:
+        that: technitium_zone_import.json.status | default('error') == 'ok'
+        quiet: true
+        fail_msg: >-
+          Technitium zone import failed (HTTP {{ technitium_zone_import.status | default('unavailable') }}).
+          {{ 'A record TTL exceeds SOA EXPIRE.'
+             if 'TTL cannot be greater than SOA EXPIRE' in (technitium_zone_import.json.errorMessage | default(''))
+             else 'Inspect the DNS server log on dns-01 for the API error; response details are hidden to protect zone data.' }}
+          The zone may be partially imported. Correct the error and rerun the playbook.
+      no_log: false
+      when: not ansible_check_mode and technitium_zone_records_changed
+
+    - name: Verify authoritative A answers over UDP and TCP
+      ansible.builtin.command:
+        argv:
+          - dig
+          - '@127.0.0.1'
+          - "{{ item.0.name | regex_replace('^\\*\\.', 'ansible-migration-check.') }}"
+          - A
+          - "{{ item.1 }}"
+          - +norecurse
+          - +time=5
+          - +tries=1
+          - +noall
+          - +comments
+          - +answer
+      loop: "{{ technitium_zone_records | selectattr('type', 'equalto', 'A') | product(['+notcp', '+tcp']) | list }}"
+      register: technitium_zone_answer
+      changed_when: false
+      until:
+        - technitium_zone_answer.rc == 0
+        - "'status: NOERROR' in technitium_zone_answer.stdout"
+        - technitium_zone_answer.stdout is search('flags:[^;]*\\baa\\b')
+        - technitium_zone_answer.stdout is search('\\sIN\\s+A\\s+' ~ (item.0.rData.ipAddress | regex_escape) ~ '(?:\\s|$)')
+      retries: 2
+      delay: 1
+      when: not ansible_check_mode

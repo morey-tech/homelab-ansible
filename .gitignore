@@ -4,6 +4,7 @@ roles/*
 !roles/ms_create_vm/
 !roles/ms_delete_vm/
 !roles/dns_server/
+!roles/technitium_zone/
 !roles/ocp_assisted_installer/
 
 vault-password.txt

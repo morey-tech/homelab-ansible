@@ -1,0 +1,25 @@
+---
+- name: Require a single DNS configuration host
+  ansible.builtin.assert:
+    that: groups['dns_primary'] | default([]) | length == 1
+    fail_msg: Include inventory/dns.yml with exactly one dns_primary host.
+
+- name: Load encrypted DNS API credentials
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../playbooks/network/vars/technitium-credentials.vault.yml"
+    name: technitium_zone_credentials
+  no_log: true
+
+- name: Select the DNS API credential
+  ansible.builtin.set_fact:
+    technitium_zone_token: >-
+      {{ technitium_api_token | default('', true) |
+         default(lookup('ansible.builtin.env', 'TECHNITIUM_API_TOKEN'), true) |
+         default(technitium_zone_credentials.technitium_api_token | default(''), true) }}
+  no_log: true
+
+- name: Require a DNS API credential
+  ansible.builtin.assert:
+    that: technitium_zone_token | length > 0
+    fail_msg: Save technitium_api_token in the encrypted Technitium credentials file before managing zones.
+    quiet: true

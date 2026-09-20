@@ -1,0 +1,51 @@
+---
+- name: Load zone API authentication
+  ansible.builtin.import_tasks: auth.yml
+
+- name: Remove the requested primary zone on the DNS host
+  delegate_to: "{{ groups['dns_primary'][0] }}"
+  become: true
+  no_log: true
+  block:
+    - name: Read matching zones before deletion
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/zones/list
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_zone_token }}"
+        body_format: form-urlencoded
+        body:
+          filterName: "{{ technitium_zone_name }}"
+        use_proxy: false
+      register: technitium_zone_delete_list
+      check_mode: false
+      failed_when: technitium_zone_delete_list.json.status | default('error') != 'ok'
+
+    - name: Select the exact zone to delete
+      ansible.builtin.set_fact:
+        technitium_zone_delete_matches: "{{ technitium_zone_delete_list.json.response.zones | selectattr('name', 'equalto', technitium_zone_name) | list }}"
+
+    - name: Refuse to delete a non-primary zone
+      ansible.builtin.assert:
+        that: technitium_zone_delete_matches | length == 0 or technitium_zone_delete_matches[0].type == 'Primary'
+
+    - name: Report pending zone deletion
+      ansible.builtin.debug:
+        msg: The cluster's primary zone would be deleted.
+      changed_when: true
+      when: ansible_check_mode and technitium_zone_delete_matches | length > 0
+
+    - name: Delete the cluster primary zone
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/zones/delete
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_zone_token }}"
+        body_format: form-urlencoded
+        body:
+          zone: "{{ technitium_zone_name }}"
+        use_proxy: false
+      register: technitium_zone_delete
+      changed_when: true
+      failed_when: technitium_zone_delete.json.status | default('error') != 'ok'
+      when: not ansible_check_mode and technitium_zone_delete_matches | length > 0
