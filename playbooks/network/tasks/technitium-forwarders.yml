@@ -1,0 +1,54 @@
+---
+# Uses Technitium's documented settings API on the managed host, over SSH.
+- name: Require a Technitium API token
+  ansible.builtin.assert:
+    that:
+      - technitium_api_token | default('') | length > 0
+    fail_msg: >-
+      Supply TECHNITIUM_API_TOKEN or set technitium_api_token through Ansible Vault
+      or an AAP credential. The token needs Settings View and Modify permissions.
+    quiet: true
+
+- name: Read current Technitium settings
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/settings/get
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    use_proxy: false
+  register: technitium_current_settings
+  check_mode: false
+  no_log: true
+  failed_when: technitium_current_settings.json.status | default('error') != 'ok'
+
+- name: Compare Technitium upstream DNS configuration
+  ansible.builtin.set_fact:
+    technitium_forwarders_changed: >-
+      {{ (technitium_current_settings.json.response.forwarders | default([], true)) != technitium_forwarders
+         or technitium_current_settings.json.response.forwarderProtocol != technitium_forwarder_protocol }}
+
+- name: Report pending Technitium upstream DNS changes in check mode
+  ansible.builtin.debug:
+    msg: Technitium upstream DNS configuration would change.
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - technitium_forwarders_changed
+
+- name: Apply Technitium upstream DNS configuration
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/settings/set
+    method: POST
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    body_format: form-urlencoded
+    body:
+      forwarders: "{{ (technitium_forwarders | join(',')) if technitium_forwarders | length > 0 else 'false' }}"
+      forwarderProtocol: "{{ technitium_forwarder_protocol }}"
+    use_proxy: false
+  register: technitium_updated_settings
+  no_log: true
+  changed_when: true
+  failed_when: technitium_updated_settings.json.status | default('error') != 'ok'
+  when:
+    - not ansible_check_mode
+    - technitium_forwarders_changed

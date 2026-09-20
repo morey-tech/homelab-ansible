@@ -5,3 +5,11 @@ network_services_hostname: "network-services"
 network_services_parent_interface: ""
 network_services_vlan3_address: 192.168.3.17/24
 network_services_vlan6_address: 192.168.6.17/24
+
+# Unfiltered Cloudflare DNS over TLS. Addresses avoid a bootstrap DNS lookup.
+technitium_forwarders:
+  - "cloudflare-dns.com (1.1.1.1:853)"
+  - "cloudflare-dns.com (1.0.0.1:853)"
+technitium_forwarder_protocol: Tls
+# Alternatively override this variable with an Ansible Vault secret or AAP credential.
+technitium_api_token: "{{ lookup('ansible.builtin.env', 'TECHNITIUM_API_TOKEN') }}"

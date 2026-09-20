@@ -173,6 +173,10 @@
       become: false
       when: not ansible_check_mode
 
+    - name: Configure Technitium upstream DNS
+      ansible.builtin.import_tasks: tasks/technitium-forwarders.yml
+      tags: technitium_config
+
   handlers:
     - name: Restart systemd-resolved
       ansible.builtin.systemd_service:
