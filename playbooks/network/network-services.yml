@@ -177,6 +177,36 @@
       ansible.builtin.import_tasks: tasks/technitium-forwarders.yml
       tags: technitium_config
 
+    - name: Verify Technitium resolves a public name over UDP and TCP
+      ansible.builtin.command:
+        argv:
+          - dig
+          - "@{{ ansible_host }}"
+          - "{{ technitium_test_domain | default('example.com') }}"
+          - A
+          - "{{ item }}"
+          - +time=5
+          - +tries=1
+          - +noall
+          - +comments
+          - +answer
+      loop:
+        - +notcp
+        - +tcp
+      register: technitium_dns_test
+      changed_when: false
+      # dig can return exit code 0 for SERVFAIL or NXDOMAIN.
+      until:
+        - technitium_dns_test.rc == 0
+        - "'status: NOERROR' in technitium_dns_test.stdout"
+        - technitium_dns_test.stdout is search('\\sIN\\s+A\\s+[0-9.]+')
+      retries: 3
+      delay: 2
+      when: not ansible_check_mode
+      tags:
+        - technitium_config
+        - technitium_test
+
   handlers:
     - name: Restart systemd-resolved
       ansible.builtin.systemd_service:
