@@ -47,8 +47,11 @@ technitium_conditional_forwarders:
     forwarder: 192.168.1.1
   - zone: iot.morey.tech
     forwarder: 192.168.1.1
-# Alternatively override this variable with an Ansible Vault secret or AAP credential.
-technitium_api_token: "{{ lookup('ansible.builtin.env', 'TECHNITIUM_API_TOKEN') }}"
+# Environment/AAP injection takes precedence over the encrypted credential file.
+technitium_api_token: >-
+  {{ lookup('ansible.builtin.env', 'TECHNITIUM_API_TOKEN')
+     | default(technitium_credentials.technitium_api_token | default(''), true) }}
+technitium_api_bootstrap_interactive: true
 
 # Technitium downloads and refreshes these lists itself.
 technitium_blocking_enabled: true

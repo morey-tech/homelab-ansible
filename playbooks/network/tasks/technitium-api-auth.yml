@@ -1,0 +1,49 @@
+---
+- name: Check saved Technitium credentials
+  ansible.builtin.import_tasks: technitium-check-token.yml
+
+- name: Require a reachable authentication API
+  ansible.builtin.assert:
+    that: technitium_token_state | trim != 'api-error'
+    fail_msg: >-
+      Technitium's session API could not validate the request. Check dns.service,
+      the loopback web listener on port 5380, and the server logs. Credentials and
+      API response details are suppressed.
+    quiet: true
+
+- name: Bootstrap the homelab-ansible API token
+  when:
+    - technitium_token_state | trim in ['missing', 'rejected']
+    - not ansible_check_mode
+    - technitium_api_bootstrap_interactive | default(true) | bool
+  block:
+    - name: Wait for the administrator to save an API token in Vault
+      ansible.builtin.pause:
+        prompt: |
+          Technitium is installed, but the API token is missing or rejected.
+          1. Open http://{{ ansible_host }}:5380/ and log in. Change the default password on a fresh install.
+          2. Create an API token named homelab-ansible for an administrator or automation user.
+             Required permissions: Settings View/Modify; Apps View/Modify/Delete;
+             Allowed View/Modify/Delete; Zones View/Modify and View/Modify on managed zones.
+          3. In another terminal, from this repository, run:
+             ansible-vault edit playbooks/network/vars/technitium-credentials.vault.yml
+             Set technitium_api_token to the new token, save, and close the editor.
+          Never paste the token into this prompt.
+          An environment or extra-variable token overrides Vault. If that token was rejected,
+          cancel and rerun without the stale override after saving the new token.
+          Press Enter once the encrypted file is saved, or Ctrl+C then A to abort.
+
+    - name: Reload and validate the saved API token
+      ansible.builtin.import_tasks: technitium-check-token.yml
+
+- name: Require valid API credentials before configuring Technitium
+  ansible.builtin.assert:
+    that: technitium_token_state | trim == 'valid'
+    fail_msg: >-
+      No valid Technitium API token is available ({{ technitium_token_state | trim }}).
+      Create the homelab-ansible token and save technitium_api_token using
+      ansible-vault edit playbooks/network/vars/technitium-credentials.vault.yml,
+      or supply a valid TECHNITIUM_API_TOKEN/AAP credential. Remove stale overrides.
+      Installation is complete; resume with --tags technitium_config.
+      Check mode and noninteractive runs require credentials in advance.
+    quiet: true
