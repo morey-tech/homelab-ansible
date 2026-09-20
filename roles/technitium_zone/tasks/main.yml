@@ -181,7 +181,7 @@
         argv:
           - dig
           - '@127.0.0.1'
-          - "{{ item.0.name | regex_replace('^\\*\\.', 'ansible-migration-check.') }}"
+          - "{{ item.0.name | regex_replace('^\\*\\.', 'ansible-dns-check.') }}"
           - A
           - "{{ item.1 }}"
           - +norecurse

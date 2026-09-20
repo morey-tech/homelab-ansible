@@ -407,84 +407,32 @@ Run the normal `--tags technitium_config` workflow to verify exceptions first.
 For subsequent forwarding-only runs, use `--tags technitium_forwarding` (or add
 `--check` to preview). This narrower tag does not run the exception tests.
 
-## Migrate legacy BIND records
-
-[migrate-bind-zones.yml](migrate-bind-zones.yml) copies selected live primary
-zones from the old BIND server to the Technitium primary. The migration source
-and zone selection are `technitium_bind_migration_source` and
-`technitium_bind_migration_zones` in
-[DNS group variables](../../inventory/group_vars/dns.yml). The source SSH
-address is in [home inventory](../../inventory/home.yml). Use the entire
-inventory directory so both the source and destination hosts are loaded:
-
-```bash
-ansible-playbook -i inventory/ playbooks/network/migrate-bind-zones.yml --check
-ansible-playbook -i inventory/ playbooks/network/migrate-bind-zones.yml
-```
-
-The migration reads live AXFR data through SSH on the BIND host's loopback
-interface. It does not enable remote zone transfers or alter BIND. All selected
-zones must export successfully before destination writes begin. During preparation,
-configured but unloaded zones were excluded from the migration list; review the
-source if a retired cluster is to be restored rather than inferring records
-from old files.
-
-The [source reader](files/read-bind-zone.py) validates the observed OCP schema:
-A records, apex NS records, and SOA. Other record types, incomplete transfers,
-or unexpected nameserver layouts abort the migration for review. Application
-records and TTLs are preserved; the in-zone nameserver A records are changed
-from the source address to `technitium_ocp_nameserver_address` in the
-[DNS group variables](../../inventory/group_vars/dns.yml). This setting derives
-the primary's RH_LAB VLAN address independently of its Ansible management address
-and is also used by the OCP provisioning tasks. SOA serials
-are managed by Technitium rather than reset to BIND's old serial.
-The reader raises SOA expiry, when needed, to cover the largest record TTL and
-the SOA refresh plus retry interval. This accommodates legacy BIND zones whose
-expiry is shorter than their TTLs, which Technitium rejects. Retry greater than
-refresh aborts for review. The original export remains unchanged in the backup.
-
-Original exports are saved once under `/var/backups/technitium/bind-migration/`
-on the destination, root-only. Existing destination zones are exported under
-`/var/backups/technitium/records/` before changing them, with prior backup versions
-retained. Zone data and API credentials are suppressed in Ansible output.
+## OCP DNS management
 
 The shared [Technitium zone role](../../roles/technitium_zone/tasks/main.yml)
-creates missing Primary zones, refuses conflicting zone types or disabled zones,
-and imports changed record sets through the documented API. Unrelated record
-sets are retained; removing a record from the input does not delete it remotely.
-Re-running with equivalent records makes no configuration writes. Each apply
-checks authoritative A answers over UDP and TCP, including an expanded wildcard
-name for application routing. The token needs Zones View/Modify and View/Modify
-on any existing destination zones. Do not keep using the migration playbook after
-records start changing independently in Technitium: its input is still BIND.
-An unsuccessful import can leave a newly created or partially populated zone.
-After correcting the error, rerun the playbook to complete its managed records;
-check mode validates inputs and compares records but does not exercise API writes.
+creates missing Primary zones and imports managed record sets through the API.
+It refuses conflicting zone types or disabled zones, validates SOA timers and
+TTLs before writing, and preserves unrelated record sets. Removing a record
+from the input does not delete it remotely. SOA serials are managed by Technitium;
+re-running with equivalent records makes no configuration writes.
 
-### Router handoff and retirement
+Existing zones are exported to `/var/backups/technitium/records/` before changes,
+with root-only permissions and prior backup versions retained. Each apply checks
+authoritative A answers over UDP and TCP, including wildcard application names.
+The token needs Zones View/Modify and View/Modify on existing managed zones.
+Zone data and credentials are suppressed in output. After an unsuccessful import,
+correct the error and rerun to complete any partially populated zone. Check mode
+validates inputs and compares records but does not exercise API writes.
 
-Keep the old BIND server running until the migrated zones have passed checks
-through the resolvers clients actually use. The preparation check found a broad
-pfSense DNS Resolver override forwarding the parent lab domain to BIND. That
-router configuration is live state, not managed by this migration playbook.
+The nameserver A record uses `technitium_ocp_nameserver_address` from
+[DNS group variables](../../inventory/group_vars/dns.yml), derived from the
+primary's RH_LAB VLAN address independently of its Ansible management address.
 
-After migration, in **pfSense → Services → DNS Resolver → Domain Overrides**,
-add specific overrides for the zones in `technitium_bind_migration_zones`,
-pointing at the primary's reachable inventory address. Test API and application
-names through pfSense and from an OCP/client network. Once the specific overrides
-work and any remaining BIND dependencies have been audited, remove the old broad
-parent-domain override before retiring BIND.
-
-**Do not point the broad parent-domain override at Technitium:** the parent
-conditional forwarder sends unresolved names back to pfSense, causing a loop.
-The specific OCP zones answer authoritatively on Technitium and avoid that loop.
-No DHCP assignments, router settings, or old VM power state are changed by the
-migration playbook. To roll back routing while BIND is still running, remove
-or repoint the new specific overrides. Clients querying Technitium directly
-will still use its imported zones; reverting those needs the saved zone exports
-or removal of only the newly imported zones, depending on their prior state.
-
-### Future OCP DNS changes
+In **pfSense → Services → DNS Resolver → Domain Overrides**, maintain an override
+for each OCP zone pointing to that nameserver address. Do not forward the broad
+parent domain to Technitium: its parent conditional forwarder sends unresolved
+names back to pfSense and would create a loop. Test API and application names
+through pfSense after adding or removing overrides.
 
 [baremetal-ocp-prepare.yml](../ocp/baremetal-ocp-prepare.yml) and
 [ms-ocp-create.yml](../ocp/ms-ocp-create.yml) now share

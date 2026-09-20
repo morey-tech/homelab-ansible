@@ -79,19 +79,11 @@ technitium_certbot_email: info+dns.home@morey.tech
 # Random subset queried over both UDP and TCP; API membership still checks every domain.
 technitium_allowed_test_sample_size: 3
 
-# Live BIND zones selected for migration; unloaded/retired zones are excluded.
-technitium_bind_migration_source: dns.rh-lab.morey.tech
-technitium_bind_migration_zones:
-  - ocp-lab.rh-lab.morey.tech
-  - ocp-mgmt.rh-lab.morey.tech
-  - ocp-gpu.rh-lab.morey.tech
-  - ocp-home.rh-lab.morey.tech
-
-# Advertise the primary's RH_LAB address in both migrated and newly created OCP zones.
+# Advertise the primary's RH_LAB address in OCP zones.
 # SSH/API management still uses the native interface and loopback respectively.
 technitium_ocp_nameserver_address: "{{ (dns_vlans | selectattr('id', 'equalto', 6) | first).address.split('/')[0] }}"
 
-# Defaults for new OCP primary zones; existing migration records retain source TTLs.
+# Defaults for OCP primary zones.
 technitium_ocp_record_ttl: 3600
 technitium_ocp_soa_refresh: 3600
 technitium_ocp_soa_retry: 600

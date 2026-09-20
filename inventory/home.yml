@@ -44,7 +44,7 @@ pvems-vms:
       cores: 4
       memory: 8192
       disk_size: 32G
-    # Legacy BIND migration source; keep reachable independently of DNS routing.
+    # Legacy BIND VM retained for rollback and eventual decommissioning.
     dns.rh-lab.morey.tech:
       ansible_host: "192.168.6.100"
       pve_node: ms-04
