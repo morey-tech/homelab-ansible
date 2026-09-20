@@ -352,8 +352,11 @@ request bodies over the VM's loopback interface. Vault protects repository
 storage; Technitium must still retain the effective domain rules on the VM.
 
 Exception configuration runs also verify that every encrypted domain appears
-in Technitium's Allowed Zones, then query each over UDP and TCP sequentially
-on the primary node. Timeout and retry behavior are defined in the
+in Technitium's Allowed Zones, then query a random sample over UDP and TCP
+sequentially on the primary node. The sample size is controlled by
+`technitium_allowed_test_sample_size` in
+[DNS group variables](../../inventory/group_vars/dns.yml). A new sample is chosen
+each run; lists smaller than the requested sample are tested in full. Timeout and retry behavior are defined in the
 [allowed-domain test tasks](tasks/technitium-test-allowed-domains.yml).
 The tests reject blocking reports, `0.0.0.0` answers, SERVFAIL, and timeouts. A normal empty or
 NXDOMAIN response is accepted: allowing a domain does not guarantee it has an

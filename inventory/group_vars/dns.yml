@@ -80,3 +80,6 @@ technitium_web_tls_enabled: true
 technitium_web_domain: "{{ inventory_hostname }}.home.morey.tech"
 technitium_web_tls_port: 53443
 technitium_certbot_email: info+dns.home@morey.tech
+
+# Random subset queried over both UDP and TCP; API membership still checks every domain.
+technitium_allowed_test_sample_size: 3

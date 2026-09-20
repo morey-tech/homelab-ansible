@@ -36,6 +36,17 @@
             technitium_private.technitium_allowed_domains
             | difference(technitium_test_allowed_export.content.splitlines()) | length == 0
 
+    - name: Require a positive allowed-domain sample size
+      ansible.builtin.assert:
+        that:
+          - technitium_allowed_test_sample_size | int > 0
+
+    - name: Select a random sample of private allowed domains
+      ansible.builtin.set_fact:
+        technitium_allowed_test_sample: >-
+          {{ (technitium_private.technitium_allowed_domains | unique | shuffle)
+             [:technitium_allowed_test_sample_size | int] }}
+
     - name: Verify allowed domains are not blocked over UDP and TCP
       ansible.builtin.command:
         argv:
@@ -51,7 +62,7 @@
           - +comments
           - +answer
           - +additional
-      loop: "{{ technitium_private.technitium_allowed_domains | product(['+notcp', '+tcp']) | list }}"
+      loop: "{{ technitium_allowed_test_sample | product(['+notcp', '+tcp']) | list }}"
       register: technitium_allowed_dns_test
       changed_when: false
       # Membership is checked separately: an unblocked name need not have an A record.
