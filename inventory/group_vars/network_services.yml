@@ -11,6 +11,17 @@ technitium_forwarders:
   - "cloudflare-dns.com (1.1.1.1:853)"
   - "cloudflare-dns.com (1.0.0.1:853)"
 technitium_forwarder_protocol: Tls
+
+# Forward these local suffixes (including subdomains) to the LAN resolver.
+technitium_conditional_forwarders:
+  - zone: home.morey.tech
+    forwarder: 192.168.1.1
+  - zone: rh-lab.morey.tech
+    forwarder: 192.168.1.1
+  - zone: lab.morey.tech
+    forwarder: 192.168.1.1
+  - zone: iot.morey.tech
+    forwarder: 192.168.1.1
 # Alternatively override this variable with an Ansible Vault secret or AAP credential.
 technitium_api_token: "{{ lookup('ansible.builtin.env', 'TECHNITIUM_API_TOKEN') }}"
 

@@ -1,0 +1,128 @@
+---
+- name: Require a token for conditional forwarding
+  ansible.builtin.assert:
+    that:
+      - technitium_api_token | default('') | length > 0
+    fail_msg: Supply a Technitium API token with Zones View and Modify permissions.
+
+- name: Read the existing conditional zone
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/zones/list
+    method: POST
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    body_format: form-urlencoded
+    body:
+      filterName: "{{ technitium_conditional_zone.zone }}"
+    use_proxy: false
+  register: technitium_zone_list
+  check_mode: false
+  no_log: true
+  failed_when: technitium_zone_list.json.status | default('error') != 'ok'
+
+- name: Select the exact zone
+  ansible.builtin.set_fact:
+    technitium_matching_zones: >-
+      {{ technitium_zone_list.json.response.zones
+         | selectattr('name', 'equalto', technitium_conditional_zone.zone) | list }}
+  no_log: true
+
+- name: Refuse to replace a different or disabled zone
+  ansible.builtin.assert:
+    that:
+      - >-
+        technitium_matching_zones | length == 0 or
+        (technitium_matching_zones[0].type == 'Forwarder' and not technitium_matching_zones[0].disabled)
+    fail_msg: An existing zone has a conflicting type or is disabled; review it before proceeding.
+
+- name: Create the conditional forwarder zone
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/zones/create
+    method: POST
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_conditional_zone.zone }}"
+      type: Forwarder
+      forwarder: "{{ technitium_conditional_zone.forwarder }}"
+      protocol: Udp
+      dnssecValidation: "false"
+      proxyType: NoProxy
+    use_proxy: false
+  register: technitium_zone_create
+  no_log: true
+  changed_when: true
+  failed_when: technitium_zone_create.json.status | default('error') != 'ok'
+  when:
+    - technitium_matching_zones | length == 0
+    - not ansible_check_mode
+
+- name: Read existing forwarder records
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/zones/records/get
+    method: POST
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_conditional_zone.zone }}"
+      domain: "{{ technitium_conditional_zone.zone }}"
+    use_proxy: false
+  register: technitium_zone_records
+  check_mode: false
+  no_log: true
+  failed_when: technitium_zone_records.json.status | default('error') != 'ok'
+  when: technitium_matching_zones | length > 0
+
+- name: Select existing forwarding records
+  ansible.builtin.set_fact:
+    technitium_existing_fwd: >-
+      {{ technitium_zone_records.json.response.records | selectattr('type', 'equalto', 'FWD') | list
+         if technitium_matching_zones | length > 0 else [] }}
+  no_log: true
+
+- name: Compare conditional forwarding configuration
+  ansible.builtin.set_fact:
+    technitium_fwd_changed: >-
+      {{ technitium_existing_fwd | length != 1 or
+         technitium_existing_fwd[0].rData.forwarder != technitium_conditional_zone.forwarder or
+         technitium_existing_fwd[0].rData.protocol != 'Udp' or
+         technitium_existing_fwd[0].rData.dnssecValidation or
+         technitium_existing_fwd[0].rData.proxyType != 'NoProxy' or
+         technitium_existing_fwd[0].disabled }}
+  no_log: true
+
+- name: Report pending conditional forwarding changes in check mode
+  ansible.builtin.debug:
+    msg: Conditional forwarding would change.
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - technitium_fwd_changed
+
+- name: Correct an existing zone's forwarder record set
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/zones/records/add
+    method: POST
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_conditional_zone.zone }}"
+      domain: "{{ technitium_conditional_zone.zone }}"
+      type: FWD
+      overwrite: "true"
+      forwarder: "{{ technitium_conditional_zone.forwarder }}"
+      protocol: Udp
+      dnssecValidation: "false"
+      proxyType: NoProxy
+    use_proxy: false
+  register: technitium_fwd_update
+  no_log: true
+  changed_when: true
+  failed_when: technitium_fwd_update.json.status | default('error') != 'ok'
+  when:
+    - not ansible_check_mode
+    - technitium_matching_zones | length > 0
+    - technitium_fwd_changed
