@@ -13,3 +13,24 @@ technitium_forwarders:
 technitium_forwarder_protocol: Tls
 # Alternatively override this variable with an Ansible Vault secret or AAP credential.
 technitium_api_token: "{{ lookup('ansible.builtin.env', 'TECHNITIUM_API_TOKEN') }}"
+
+# Technitium downloads and refreshes these lists itself.
+technitium_blocking_enabled: true
+technitium_blocklist_update_interval_hours: 24
+technitium_blocklist_urls:
+  # The Big List of Hacked Malware Web Sites
+  - https://adguardteam.github.io/HostlistsRegistry/assets/filter_9.txt
+  # uBlock filters - Badware risks
+  - https://adguardteam.github.io/HostlistsRegistry/assets/filter_50.txt
+  # Phishing Army
+  - https://adguardteam.github.io/HostlistsRegistry/assets/filter_18.txt
+  # NoCoin
+  - https://adguardteam.github.io/HostlistsRegistry/assets/filter_8.txt
+  # 1Hosts Lite
+  - https://adguardteam.github.io/HostlistsRegistry/assets/filter_24.txt
+  # HaGeZi Most Abused TLDs (AdGuard rule compatibility is limited)
+  - https://adguardteam.github.io/HostlistsRegistry/assets/filter_56.txt
+  # Phishing URL Blocklist
+  - https://adguardteam.github.io/HostlistsRegistry/assets/filter_30.txt
+  # AdGuard DNS filter
+  - https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt

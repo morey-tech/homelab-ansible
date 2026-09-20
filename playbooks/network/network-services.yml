@@ -177,6 +177,10 @@
       ansible.builtin.import_tasks: tasks/technitium-forwarders.yml
       tags: technitium_config
 
+    - name: Configure Technitium block lists
+      ansible.builtin.import_tasks: tasks/technitium-blocklists.yml
+      tags: technitium_config
+
     - name: Verify Technitium resolves a public name over UDP and TCP
       ansible.builtin.command:
         argv:
@@ -206,6 +210,42 @@
       tags:
         - technitium_config
         - technitium_test
+
+    - name: Verify Technitium blocks a listed domain over UDP and TCP
+      ansible.builtin.command:
+        argv:
+          - dig
+          - "@{{ ansible_host }}"
+          - "{{ technitium_blocklist_test_domain | default('doubleclick.net') }}"
+          - A
+          - "{{ item }}"
+          - +edns=0
+          - +time=5
+          - +tries=1
+          - +noall
+          - +comments
+          - +answer
+          - +additional
+      loop:
+        - +notcp
+        - +tcp
+      register: technitium_blocklist_test
+      changed_when: false
+      # Require Technitium's own block-list attribution, not just NXDOMAIN.
+      until:
+        - technitium_blocklist_test.rc == 0
+        - "'EDE: 15 (Blocked)' in technitium_blocklist_test.stdout"
+        - "'source=block-list-zone; blockListUrl=' in technitium_blocklist_test.stdout"
+      retries: "{{ technitium_blocklist_test_retries | default(30) }}"
+      delay: 5
+      when:
+        - not ansible_check_mode
+        - technitium_blocking_enabled | bool
+        - technitium_blocklist_urls | length > 0
+      tags:
+        - technitium_config
+        - technitium_test
+        - technitium_blocklist_test
 
   handlers:
     - name: Restart systemd-resolved

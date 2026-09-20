@@ -1,0 +1,40 @@
+---
+# Current settings are read by technitium-forwarders.yml before this task file.
+- name: Compare Technitium block list configuration
+  ansible.builtin.set_fact:
+    technitium_blocklists_changed: >-
+      {{ (technitium_current_settings.json.response.blockListUrls | default([], true) | sort)
+           != (technitium_blocklist_urls | sort)
+         or technitium_current_settings.json.response.enableBlocking != technitium_blocking_enabled
+         or not technitium_current_settings.json.response.allowTxtBlockingReport
+         or technitium_current_settings.json.response.blockListUpdateIntervalHours
+           != (technitium_blocklist_update_interval_hours | int) }}
+
+- name: Report pending Technitium block list changes in check mode
+  ansible.builtin.debug:
+    msg: Technitium block list configuration would change.
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - technitium_blocklists_changed
+
+- name: Apply Technitium block list configuration
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/settings/set
+    method: POST
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    body_format: form-urlencoded
+    body:
+      enableBlocking: "{{ technitium_blocking_enabled | bool | ternary('true', 'false') }}"
+      allowTxtBlockingReport: "true"
+      blockListUrls: "{{ (technitium_blocklist_urls | join(',')) if technitium_blocklist_urls | length > 0 else 'false' }}"
+      blockListUpdateIntervalHours: "{{ technitium_blocklist_update_interval_hours | int }}"
+    use_proxy: false
+  register: technitium_updated_blocklists
+  no_log: true
+  changed_when: true
+  failed_when: technitium_updated_blocklists.json.status | default('error') != 'ok'
+  when:
+    - not ansible_check_mode
+    - technitium_blocklists_changed
