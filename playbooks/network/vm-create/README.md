@@ -22,8 +22,9 @@ and 20. The screenshots start with these NAS and switch prerequisites already
 in place; they do not show their creation.
 
 If replacing an existing VM using `.1.53`, shut down that VM before the new one
-uses the address. Keep AdGuard running on `.3.53`: VLAN 3 stays disabled in the
-DNS playbook until the later cutover.
+uses the address. The playbook activates all VLAN addresses declared in
+[DNS inventory variables](../../../inventory/group_vars/dns.yml); ensure the
+previous host no longer uses those addresses before applying it.
 
 Download the Fedora Server DVD ISO to the NAS. The captured installation uses
 **Fedora 44**, specifically `Fedora-Server-dvd-x86_64-44-1.7.iso`. From the
@@ -257,8 +258,8 @@ ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml
 ```
 
 The playbook sets the hostname and static native IPv4 address, configures the
-tagged VLANs, installs Technitium, and manages DNS configuration. VLAN 3 remains
-disabled while `dns_cutover_enabled: false`. The reserved `.1.53` bootstrap
+tagged VLANs, installs Technitium, and manages DNS configuration. All declared
+VLAN profiles are activated. The reserved `.1.53` bootstrap
 address remains the management address after DHCP is disabled.
 
 On a new installation, follow the playbook's pause instructions to change the

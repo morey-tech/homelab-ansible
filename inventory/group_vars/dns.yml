@@ -1,6 +1,4 @@
 ---
-# Cutover is staged: shut down the old AdGuard host before applying networking.
-dns_cutover_enabled: true
 dns_hostname: "{{ inventory_hostname }}"
 dns_native_address: "192.168.1.{{ dns_address_octet }}/24"
 dns_native_gateway: 192.168.1.1
@@ -11,17 +9,14 @@ dns_vlans:
     connection: LAB
     address: "192.168.3.{{ dns_address_octet }}/24"
     zone: ns-vlan3
-    enabled: "{{ dns_cutover_enabled | bool }}"
   - id: 6
     connection: RH_LAB
     address: "192.168.6.{{ dns_address_octet }}/24"
     zone: ns-vlan6
-    enabled: true
   - id: 20
     connection: IOT
     address: "192.168.20.{{ dns_address_octet }}/24"
     zone: ns-vlan20
-    enabled: true
 
 technitium_version: "15.5"
 technitium_archive_url: https://download.technitium.com/dns/DnsServerPortable.tar.gz

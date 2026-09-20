@@ -29,7 +29,7 @@ used by a run.
 | --- | --- |
 | Active nodes, primary/secondary membership, SSH address and user | [DNS inventory](../../inventory/dns.yml) |
 | Per-node address suffix, VM flag, interface and connection profile | [dns-01 variables](../../inventory/host_vars/dns-01.yml), [dns-02 variables](../../inventory/host_vars/dns-02.yml) |
-| Native networking, VLANs, firewall zones and cutover flag | [DNS group variables](../../inventory/group_vars/dns.yml): `dns_native_*`, `dns_vlans`, `dns_firewall_zone`, `dns_cutover_enabled` |
+| Native networking, VLANs and firewall zones | [DNS group variables](../../inventory/group_vars/dns.yml): `dns_native_*`, `dns_vlans`, `dns_firewall_zone` |
 | Pinned release, download URL and checksum | [DNS group variables](../../inventory/group_vars/dns.yml): `technitium_version`, `technitium_archive_*` |
 | Upstreams and protocol | [DNS group variables](../../inventory/group_vars/dns.yml): `technitium_forwarders`, `technitium_forwarder_protocol` |
 | Block list URLs, enablement and update interval | [DNS group variables](../../inventory/group_vars/dns.yml): `technitium_blocklist_urls`, `technitium_blocking_enabled`, `technitium_blocklist_update_interval_hours` |
@@ -137,7 +137,6 @@ dns_vlans:
     connection: EXAMPLE
     address: "192.0.2.53/24"
     zone: example-dns
-    enabled: false
 ```
 
 The VM's switch/hypervisor connection must carry the VLANs declared in inventory.
@@ -147,16 +146,15 @@ access. [VLAN tasks](tasks/network-vlan.yml) enable duplicate-address detection
 before activation. [Networking tasks](tasks/network-addresses.yml) back up the
 original profiles in a protected directory before managing them.
 
-For any VLAN whose `enabled` value follows `dns_cutover_enabled`, **shut down
-the existing AdGuard instance using those addresses before enabling cutover**.
-Set `dns_cutover_enabled: true` in the group variables and run:
+All VLANs listed in `dns_vlans` are activated with autoconnect enabled. To apply
+network configuration changes, run:
 
 ```bash
 ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml --tags network_addresses
 ```
 
-Setting the flag back to `false` disconnects those profiles and disables their
-autoconnect. Full playbook runs enforce the inventory's activation flags too.
+Removing an entry from inventory does not delete its existing NetworkManager
+profile; retire unused profiles explicitly.
 
 ## Technitium configuration as code
 

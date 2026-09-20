@@ -1,23 +1,9 @@
 ---
-- name: Read active NetworkManager profile names
-  ansible.builtin.command: nmcli -g NAME connection show --active
-  register: dns_active_profiles
-  changed_when: false
-  check_mode: false
-
 - name: Read all NetworkManager profile names
   ansible.builtin.command: nmcli -g NAME connection show
   register: dns_all_profiles
   changed_when: false
   check_mode: false
-
-- name: Disconnect a VLAN that must remain inactive
-  community.general.nmcli:
-    conn_name: "{{ dns_vlan.connection }}"
-    state: down
-  when:
-    - not dns_vlan.enabled | bool
-    - dns_vlan.connection in dns_active_profiles.stdout_lines
 
 - name: Configure the tagged VLAN profile
   community.general.nmcli:
@@ -33,9 +19,7 @@
     dns4_ignore_auto: true
     zone: "{{ dns_vlan.zone }}"
     # New profiles remain down until duplicate-address detection is configured.
-    autoconnect: >-
-      {{ dns_vlan.enabled | bool and
-         dns_vlan.connection in dns_all_profiles.stdout_lines }}
+    autoconnect: "{{ dns_vlan.connection in dns_all_profiles.stdout_lines }}"
     state: present
   register: dns_vlan_profile
 
@@ -55,22 +39,20 @@
     - not ansible_check_mode
     - dns_vlan_dad.stdout != '3000'
 
-- name: Enable autoconnect for a newly created active VLAN
+- name: Enable autoconnect for a newly created VLAN
   ansible.builtin.command:
     argv: [nmcli, connection, modify, "{{ dns_vlan.connection }}", connection.autoconnect, "yes"]
   changed_when: true
   when:
-    - dns_vlan.enabled | bool
     - dns_vlan.connection not in dns_all_profiles.stdout_lines
     - not ansible_check_mode
 
-- name: Activate or reapply an enabled VLAN profile
+- name: Activate or reapply the VLAN profile
   community.general.nmcli:
     conn_name: "{{ dns_vlan.connection }}"
     state: up
     conn_reload: "{{ dns_vlan_profile.changed }}"
   when:
-    - dns_vlan.enabled | bool
     - not ansible_check_mode
 
 - name: Read live IPv4 addresses after VLAN configuration
@@ -79,8 +61,8 @@
   changed_when: false
   when: not ansible_check_mode
 
-- name: Verify the VLAN address activation state
+- name: Verify the VLAN address is active
   ansible.builtin.assert:
     that:
-      - (dns_vlan.address in dns_vlan_live.stdout) == (dns_vlan.enabled | bool)
+      - dns_vlan.address in dns_vlan_live.stdout
   when: not ansible_check_mode
