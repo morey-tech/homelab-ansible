@@ -181,6 +181,12 @@
       ansible.builtin.import_tasks: tasks/technitium-blocklists.yml
       tags: technitium_config
 
+    - name: Configure private Technitium blocking exceptions
+      ansible.builtin.import_tasks: tasks/technitium-allowed-domains.yml
+      tags:
+        - technitium_config
+        - technitium_exceptions
+
     - name: Verify Technitium resolves a public name over UDP and TCP
       ansible.builtin.command:
         argv:
@@ -246,6 +252,14 @@
         - technitium_config
         - technitium_test
         - technitium_blocklist_test
+
+    - name: Verify private Technitium blocking exceptions
+      ansible.builtin.import_tasks: tasks/technitium-test-allowed-domains.yml
+      tags:
+        - technitium_config
+        - technitium_exceptions
+        - technitium_test
+        - technitium_allowed_test
 
   handlers:
     - name: Restart systemd-resolved

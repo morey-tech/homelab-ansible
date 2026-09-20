@@ -1,0 +1,67 @@
+---
+- name: Load encrypted exceptions for testing
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/technitium-vault.yml"
+    name: technitium_private
+  no_log: true
+
+- name: Test private Technitium exceptions
+  when:
+    - not ansible_check_mode
+    - technitium_private.technitium_allowed_domains | default([], true) | length > 0
+  no_log: true
+  diff: false
+  block:
+    - name: Require an API token to verify allowed zone membership
+      ansible.builtin.assert:
+        that:
+          - technitium_api_token | default('') | length > 0
+
+    - name: Read effective allowed domains for verification
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/allowed/export
+        headers:
+          Authorization: "Bearer {{ technitium_api_token }}"
+        return_content: true
+        use_proxy: false
+      register: technitium_test_allowed_export
+      failed_when: >-
+        technitium_test_allowed_export.status | default(0) != 200
+        or 'text/plain' not in (technitium_test_allowed_export.content_type | default(''))
+
+    - name: Verify all private exceptions exist in allowed zones
+      ansible.builtin.assert:
+        that:
+          - >-
+            technitium_private.technitium_allowed_domains
+            | difference(technitium_test_allowed_export.content.splitlines()) | length == 0
+
+    - name: Verify allowed domains are not blocked over UDP and TCP
+      ansible.builtin.command:
+        argv:
+          - dig
+          - "@{{ ansible_host }}"
+          - "{{ item.0 }}"
+          - A
+          - "{{ item.1 }}"
+          - +edns=0
+          - +time=5
+          - +tries=1
+          - +noall
+          - +comments
+          - +answer
+          - +additional
+      loop: "{{ technitium_private.technitium_allowed_domains | product(['+notcp', '+tcp']) | list }}"
+      register: technitium_allowed_dns_test
+      changed_when: false
+      # Membership is checked separately: an unblocked name need not have an A record.
+      until:
+        - technitium_allowed_dns_test.rc == 0
+        - >-
+          technitium_allowed_dns_test.stdout is search('status: (NOERROR|NXDOMAIN),')
+        - "'EDE: 15 (Blocked)' not in technitium_allowed_dns_test.stdout"
+        - "'source=block-list-zone' not in technitium_allowed_dns_test.stdout"
+        - "'source=blocked-zone' not in technitium_allowed_dns_test.stdout"
+        - technitium_allowed_dns_test.stdout is not search('\\sIN\\s+A\\s+0\\.0\\.0\\.0(?:\\s|$)')
+      retries: 3
+      delay: 2
