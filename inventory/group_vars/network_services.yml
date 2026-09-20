@@ -6,6 +6,10 @@ network_services_parent_interface: ""
 network_services_vlan3_address: 192.168.3.17/24
 network_services_vlan6_address: 192.168.6.17/24
 
+technitium_version: "15.5"
+technitium_archive_url: https://download.technitium.com/dns/DnsServerPortable.tar.gz
+technitium_archive_checksum: sha256:207c75ecaf7a31e6a1a0d6fd358f4efcb0f7a3f2d2dd17671c71c06fdf75773d
+
 # Unfiltered Cloudflare DNS over TLS. Addresses avoid a bootstrap DNS lookup.
 technitium_forwarders:
   - "cloudflare-dns.com (1.1.1.1:853)"
