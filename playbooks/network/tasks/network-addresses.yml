@@ -1,0 +1,114 @@
+---
+- name: Back up NetworkManager connection profiles before managing DNS addresses
+  block:
+    - name: Create protected network backup directory
+      ansible.builtin.file:
+        path: /var/backups/network-services
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Save original NetworkManager profiles once
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -czf
+          - /var/backups/network-services/before-dns-vlans.tar.gz
+          - -C
+          - /etc/NetworkManager
+          - system-connections
+        creates: /var/backups/network-services/before-dns-vlans.tar.gz
+
+- name: Read native connection's static addresses
+  ansible.builtin.command:
+    argv: [nmcli, -g, ipv4.addresses, connection, show, "{{ network_services_native_connection }}"]
+  register: network_services_native_static
+  changed_when: false
+  check_mode: false
+
+- name: Check the native DNS address for conflicts before adding it
+  ansible.builtin.command:
+    argv:
+      - arping
+      - -D
+      - -I
+      - "{{ network_services_parent_interface }}"
+      - -c
+      - "3"
+      - -w
+      - "3"
+      - "{{ network_services_native_address.split('/')[0] }}"
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - network_services_native_address not in network_services_native_static.stdout
+
+- name: Add the native DNS address while preserving DHCP management settings
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - "{{ network_services_native_connection }}"
+      - +ipv4.addresses
+      - "{{ network_services_native_address }}"
+  changed_when: true
+  when: network_services_native_address not in network_services_native_static.stdout
+
+- name: Read live native addresses
+  ansible.builtin.command:
+    argv: [ip, -4, -o, address, show, dev, "{{ network_services_parent_interface }}"]
+  register: network_services_native_live
+  changed_when: false
+  check_mode: false
+
+- name: Apply the added native address without disconnecting management
+  ansible.builtin.command:
+    argv: [nmcli, device, reapply, "{{ network_services_parent_interface }}"]
+  changed_when: true
+  when: network_services_native_address not in network_services_native_live.stdout
+
+- name: Ensure dedicated VLAN firewall zones exist
+  ansible.posix.firewalld:
+    zone: "{{ item.zone }}"
+    state: present
+    permanent: true
+  loop: "{{ network_services_vlans }}"
+  register: network_services_zone_creation
+
+# Runtime zones must exist before the following immediate port rules are applied.
+- name: Load newly created firewall zones # noqa: no-handler
+  ansible.builtin.command: firewall-cmd --reload
+  changed_when: true
+  when: network_services_zone_creation is changed
+
+- name: Allow DNS in the tagged VLAN zones
+  ansible.posix.firewalld:
+    zone: "{{ item.zone }}"
+    service: dns
+    state: enabled
+    permanent: true
+    immediate: true
+  loop: "{{ network_services_vlans }}"
+  when: not ansible_check_mode or not network_services_zone_creation.changed
+
+- name: Configure each tagged VLAN
+  ansible.builtin.include_tasks:
+    file: network-vlan.yml
+    apply:
+      tags: network_addresses
+  loop: "{{ network_services_vlans }}"
+  loop_control:
+    loop_var: network_services_vlan
+
+- name: Verify native management and DNS addresses coexist
+  ansible.builtin.command:
+    argv: [ip, -4, -o, address, show, dev, "{{ network_services_parent_interface }}"]
+  register: network_services_native_final
+  changed_when: false
+  failed_when: >-
+    network_services_native_final.rc != 0 or
+    network_services_native_address not in network_services_native_final.stdout or
+    (ansible_host ~ '/') not in network_services_native_final.stdout
+  when: not ansible_check_mode
