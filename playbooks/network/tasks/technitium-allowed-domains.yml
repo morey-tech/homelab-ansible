@@ -1,0 +1,90 @@
+---
+- name: Load encrypted Technitium exceptions
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/technitium-vault.yml"
+    name: technitium_private
+  no_log: true
+
+- name: Manage private Technitium allowed domains
+  when: technitium_private.technitium_allowed_domains is not none
+  no_log: true
+  diff: false
+  block:
+    - name: Validate private exception configuration
+      ansible.builtin.assert:
+        that:
+          - technitium_private.technitium_allowed_domains is sequence
+          - technitium_private.technitium_allowed_domains is not string
+          - technitium_private.technitium_allowed_domains is not mapping
+          - technitium_api_token | default('') | length > 0
+
+    - name: Validate each private domain before changing allowed zones
+      ansible.builtin.assert:
+        that:
+          - item is string
+          - item | length <= 253
+          - item is match('^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$')
+      loop: "{{ technitium_private.technitium_allowed_domains }}"
+
+    - name: Read existing allowed domains
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/allowed/export
+        headers:
+          Authorization: "Bearer {{ technitium_api_token }}"
+        return_content: true
+        use_proxy: false
+      register: technitium_allowed_export
+      check_mode: false
+      failed_when: >-
+        technitium_allowed_export.status | default(0) != 200
+        or 'text/plain' not in (technitium_allowed_export.content_type | default(''))
+
+    - name: Compare private allowed domains
+      ansible.builtin.set_fact:
+        technitium_allowed_to_add: >-
+          {{ technitium_private.technitium_allowed_domains
+             | difference(technitium_allowed_export.content.splitlines() | reject('equalto', '') | list) }}
+        technitium_allowed_to_remove: >-
+          {{ technitium_allowed_export.content.splitlines() | reject('equalto', '') | list
+             | difference(technitium_private.technitium_allowed_domains) }}
+
+    - name: Report pending private exception changes in check mode
+      ansible.builtin.debug:
+        msg: Private DNS exceptions would change.
+      changed_when: true
+      when:
+        - ansible_check_mode
+        - technitium_allowed_to_add | length > 0 or technitium_allowed_to_remove | length > 0
+
+    - name: Add missing allowed domains
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/allowed/import
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_api_token }}"
+        body_format: form-urlencoded
+        body:
+          allowedZones: "{{ technitium_allowed_to_add | join(',') }}"
+        use_proxy: false
+      register: technitium_allowed_import
+      changed_when: true
+      failed_when: technitium_allowed_import.json.status | default('error') != 'ok'
+      when:
+        - not ansible_check_mode
+        - technitium_allowed_to_add | length > 0
+
+    - name: Remove allowed domains absent from the encrypted configuration
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5380/api/allowed/delete
+        method: POST
+        headers:
+          Authorization: "Bearer {{ technitium_api_token }}"
+        body_format: form-urlencoded
+        body:
+          domain: "{{ item }}"
+        use_proxy: false
+      loop: "{{ technitium_allowed_to_remove }}"
+      register: technitium_allowed_delete
+      changed_when: true
+      failed_when: technitium_allowed_delete.json.status | default('error') != 'ok'
+      when: not ansible_check_mode
