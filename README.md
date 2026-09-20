@@ -6,13 +6,16 @@ This repo is structured for Ansible Automation Platform (AAP). Some settings tha
 
 ### Vault Password
 
-AAP injects credentials directly. Locally, set the vault password file via environment variable:
+Local runs from the repository use `vault-password.txt` automatically through
+`ansible.cfg`; `--vault-password-file=vault-password.txt` is no longer necessary.
+An environment variable or explicit CLI option can override this default:
 
 ```bash
 export ANSIBLE_VAULT_PASSWORD_FILE=./vault-password.txt
 ```
 
-Get the password from the `Ansible ms Vault Password` entry in Bitwarden and place it in `vault-password.txt`. Add this export to your shell profile (`.zshrc`, `.bashrc`, etc.) or use a `.envrc` file with `direnv`.
+Get the password from the `Ansible ms Vault Password` entry in Bitwarden and place it in `vault-password.txt`. Keep this file untracked. In AAP, attach a Vault credential and override the local
+password-file setting with the injected credential path as appropriate for the execution environment.
 
 ### Installing Collections
 
@@ -29,6 +32,14 @@ ansible-playbook playbooks/proxmox/ms-create-vm.yml
 ansible-playbook playbooks/lab/alloy-install.yml
 ansible-playbook playbooks/ocp/ms-ocp-create.yml
 ```
+
+### DNS and Technitium
+
+See the [DNS playbook guide](playbooks/network/README.md) for provisioning,
+upgrades, VLAN addressing, encrypted credentials, HTTPS, DNS configuration,
+and verification. Start with the
+[QNAP VM creation runbook](playbooks/network/vm-create/README.md) when creating
+or recreating `dns-01`.
 
 ### Destroy Playbooks (Confirmation Required)
 

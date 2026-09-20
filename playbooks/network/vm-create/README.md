@@ -264,6 +264,6 @@ address remains the management address after DHCP is disabled.
 On a new installation, follow the playbook's pause instructions to change the
 Technitium admin password, create the **homelab-ansible** API token, and save
 it with `ansible-vault edit`. See
-[Technitium configuration as code](../../../README.md#technitium-configuration-as-code)
+[Technitium configuration as code](../README.md#technitium-configuration-as-code)
 for that subsequent workflow. Do not restore a baseline snapshot expecting it
 to contain later Technitium configuration.
