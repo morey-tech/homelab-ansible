@@ -406,6 +406,10 @@ unrelated records and zones removed from inventory are not deleted automatically
 Run the normal `--tags technitium_config` workflow to verify exceptions first.
 For subsequent forwarding-only runs, use `--tags technitium_forwarding` (or add
 `--check` to preview). This narrower tag does not run the exception tests.
+Forwarding tasks process all configured domains at each stage, validating zone
+types and reading records before making changes. A domain-labelled plan shows
+`create`, `update`, or `unchanged`; successful writes are reported by domain.
+API requests and responses remain hidden to protect credentials and zone data.
 
 ## OCP DNS management
 

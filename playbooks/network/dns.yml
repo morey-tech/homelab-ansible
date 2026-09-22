@@ -272,13 +272,7 @@
         - technitium_allowed_test
 
     - name: Configure Technitium conditional forwarding after exception verification
-      ansible.builtin.include_tasks:
-        file: tasks/technitium-conditional-forwarder.yml
-        apply:
-          tags: [technitium_config, technitium_forwarding]
-      loop: "{{ technitium_conditional_forwarders }}"
-      loop_control:
-        loop_var: technitium_conditional_zone
+      ansible.builtin.import_tasks: tasks/technitium-conditional-forwarder.yml
       tags: [technitium_config, technitium_forwarding]
 
 - name: Verify DNS service on each provisioned node
