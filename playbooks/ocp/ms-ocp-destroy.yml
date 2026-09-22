@@ -72,6 +72,14 @@
       loop_control:
         label: "{{ item.item }}"
 
+    - name: Remove the cluster domain override from pfSense
+      pfsense_dns_domain_override:
+        domain: "{{ cluster_name }}.{{ cluster_dns_zone }}"
+        state: absent
+      delegate_to: "{{ hostvars[groups['dns_primary'][0]].pfsense_dns_host }}"
+      become: false
+      throttle: 1
+
     - name: Remove the cluster DNS zone from Technitium
       ansible.builtin.include_role:
         name: technitium_zone

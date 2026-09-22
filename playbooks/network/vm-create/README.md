@@ -254,7 +254,7 @@ References: [Baseline snapshot settings](24-qnap-baseline-snapshot.png),
 The VM is now ready for the playbook. From the repository root:
 
 ```bash
-ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml
+ansible-playbook -i inventory/ playbooks/network/dns.yml
 ```
 
 The playbook sets the hostname and static native IPv4 address, configures the

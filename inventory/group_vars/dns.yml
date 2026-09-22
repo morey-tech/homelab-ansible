@@ -45,6 +45,12 @@ technitium_conditional_forwarders:
     forwarder: 192.168.1.1
   - zone: taile3c3a8.ts.net
     forwarder: 192.168.1.1
+
+# Router-side forwarding. OCP overrides are derived from inventory and live Primary zones.
+pfsense_dns_host: pfsense.home.morey.tech
+pfsense_dns_domain_overrides:
+  - domain: taile3c3a8.ts.net
+    ip: 100.100.100.100
 # Environment/AAP injection takes precedence over the encrypted credential file.
 technitium_api_token: >-
   {{ lookup('ansible.builtin.env', 'TECHNITIUM_API_TOKEN')

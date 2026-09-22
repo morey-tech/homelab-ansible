@@ -238,6 +238,7 @@
         - technitium_test
         - technitium_forwarding
         - technitium_api_auth
+        - pfsense_dns
         - technitium_web_tls
 
     - name: Configure the Technitium web console certificate
@@ -274,6 +275,10 @@
     - name: Configure Technitium conditional forwarding after exception verification
       ansible.builtin.import_tasks: tasks/technitium-conditional-forwarder.yml
       tags: [technitium_config, technitium_forwarding]
+
+    - name: Manage pfSense DNS Resolver domain overrides
+      ansible.builtin.import_tasks: tasks/pfsense-dns-overrides.yml
+      tags: [pfsense_dns]
 
 - name: Verify DNS service on each provisioned node
   hosts: dns

@@ -45,7 +45,7 @@ A full run upgrades installed OS packages, installs baseline tools and Technitiu
 configures networking, and starts the services:
 
 ```bash
-ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml
+ansible-playbook -i inventory/ playbooks/network/dns.yml
 ```
 
 Add `--ask-become-pass` if the SSH user requires a sudo password. The VM
@@ -73,8 +73,8 @@ rollback is not performed. The upgraded web console and DNS TCP port are checked
 Preview or apply an upgrade to an already provisioned host without an API token:
 
 ```bash
-ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml --tags technitium_upgrade --check
-ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml --tags technitium_upgrade
+ansible-playbook -i inventory/ playbooks/network/dns.yml --tags technitium_upgrade --check
+ansible-playbook -i inventory/ playbooks/network/dns.yml --tags technitium_upgrade
 ```
 
 Use a full run for first installation so dependencies, directories, and initial
@@ -150,7 +150,7 @@ All VLANs listed in `dns_vlans` are activated with autoconnect enabled. To apply
 network configuration changes, run:
 
 ```bash
-ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml --tags network_addresses
+ansible-playbook -i inventory/ playbooks/network/dns.yml --tags network_addresses
 ```
 
 Removing an entry from inventory does not delete its existing NetworkManager
@@ -201,8 +201,8 @@ With the API token and Cloudflare token supplied, preview and apply the DNS
 configuration (including web HTTPS):
 
 ```bash
-ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml --tags technitium_config --check
-ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml --tags technitium_config
+ansible-playbook -i inventory/ playbooks/network/dns.yml --tags technitium_config --check
+ansible-playbook -i inventory/ playbooks/network/dns.yml --tags technitium_config
 ```
 
 Add `--ask-become-pass` if sudo requires a password. To provision without any
@@ -284,7 +284,7 @@ The certificate name, port, and contact email are configured with
 [DNS group variables](../../inventory/group_vars/dns.yml). Run against an installed Technitium instance:
 
 ```bash
-ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml --tags technitium_web_tls
+ansible-playbook -i inventory/ playbooks/network/dns.yml --tags technitium_web_tls
 ```
 
 A full run also includes these tasks. API authentication happens first: a fresh
@@ -432,8 +432,8 @@ The nameserver A record uses `technitium_ocp_nameserver_address` from
 [DNS group variables](../../inventory/group_vars/dns.yml), derived from the
 primary's RH_LAB VLAN address independently of its Ansible management address.
 
-In **pfSense → Services → DNS Resolver → Domain Overrides**, maintain an override
-for each OCP zone pointing to that nameserver address. Do not forward the broad
+The OCP DNS tasks add a pfSense DNS Resolver domain override after verifying
+the Technitium zone, pointing to that nameserver address. Do not forward the broad
 parent domain to Technitium: its parent conditional forwarder sends unresolved
 names back to pfSense and would create a loop. Test API and application names
 through pfSense after adding or removing overrides.
@@ -456,19 +456,60 @@ Add `--limit <cluster-inventory-name>` to select a cluster. API calls are delega
 to the single `dns_primary` host; no SSH connection to the cluster itself is needed.
 The [VM cluster destroy playbook](../ocp/ms-ocp-destroy.yml) removes the corresponding
 Technitium Primary zone under its existing `confirm_destroy=yes` guard. Deletion
-requires Zones Modify and zone Delete permissions. Maintain the matching pfSense
-specific-domain overrides when adding or removing clusters; these tasks manage
-DNS records, not router overrides. Legacy BIND create/destroy playbooks remain
+requires Zones Modify and zone Delete permissions. The destroy playbook removes
+the corresponding pfSense override before deleting the zone. Legacy BIND create/destroy playbooks remain
 for the old VM's lifecycle and are not part of normal OCP DNS management.
+
+## pfSense DNS Resolver overrides
+
+Install the controller collections from the repository root before using this
+workflow (the local module imports `pfsensible.core`):
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
+
+The collection must be in the running controller's Ansible collection path;
+installing it on pfSense or only in a temporary test directory is insufficient.
+
+The DNS playbook manages the Tailscale override from `pfsense_dns_domain_overrides`
+in [DNS group variables](../../inventory/group_vars/dns.yml). It also derives OCP
+overrides from cluster inventory, including only zones that already exist as
+enabled Technitium Primary zones. Unprovisioned clusters are skipped. Removing
+an inventory entry does not delete an existing override; the OCP destroy playbook
+handles removal when retiring a VM cluster.
+
+Use the full inventory so pfSense's SSH user and the OCP cluster definitions
+are available:
+
+```bash
+ansible-playbook -i inventory/ playbooks/network/dns.yml --tags pfsense_dns --check --diff
+ansible-playbook -i inventory/ playbooks/network/dns.yml --tags pfsense_dns
+```
+
+Full untagged DNS runs also manage these overrides and therefore require
+`-i inventory/`. Technitium-only tags can still use `-i inventory/dns.yml`.
+Tailscale DNS must be reachable from pfSense; the override does not install or
+authenticate Tailscale on the router.
+
+The [local domain-override module](../../library/pfsense_dns_domain_override.py)
+uses the pinned `pfsensible.core` configuration helpers, supports check/diff mode,
+and reloads Unbound only when an override changes. It manages individual plain-DNS
+overrides while preserving other domains, descriptions, host overrides, and
+global resolver settings. This is repository-maintained code: the collection's
+general resolver module supplies defaults for unrelated settings and is not
+suitable for managing just these entries. Router operations are serialized to
+avoid concurrent config writes from multiple cluster hosts in the same play.
 
 ## Task tags
 
-Use these with `ansible-playbook -i inventory/dns.yml playbooks/network/dns.yml`.
+Use these with `ansible-playbook -i inventory/ playbooks/network/dns.yml`.
 Targeted runs assume the host has already been provisioned. Tasks tagged
 `always`, including platform and primary-group validation, still run.
 
 | Tag | Scope | Credentials needed beyond SSH/sudo |
 | --- | --- | --- |
+| `pfsense_dns` | Tailscale and existing OCP resolver overrides on pfSense | Technitium API token and pfSense SSH access; full inventory |
 | `network_addresses` | Hostname, native IPv4, VLANs, network firewall rules | None |
 | `technitium_upgrade` | Install/upgrade to the pinned server version | None |
 | `technitium_api_auth` | Load and validate the API token | Vault/API token; interactive bootstrap if needed |

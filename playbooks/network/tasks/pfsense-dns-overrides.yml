@@ -1,0 +1,51 @@
+---
+- name: Require pfSense and cluster inventory for router DNS management
+  ansible.builtin.assert:
+    that:
+      - pfsense_dns_host in hostvars
+      - groups['ms-ocp-clusters'] is defined
+      - groups['baremetal-ocp-clusters'] is defined
+    fail_msg: Use -i inventory/ to include pfSense, OCP clusters, and DNS hosts.
+
+- name: Read Technitium zones before selecting OCP router overrides
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5380/api/zones/list
+    method: POST
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    use_proxy: false
+  register: pfsense_dns_zones
+  check_mode: false
+  no_log: true
+  failed_when: pfsense_dns_zones.json.status | default('error') != 'ok'
+
+- name: Initialize the router domain override list
+  ansible.builtin.set_fact:
+    pfsense_dns_desired_overrides: "{{ pfsense_dns_domain_overrides }}"
+    pfsense_dns_primary_zones: >-
+      {{ pfsense_dns_zones.json.response.zones | selectattr('type', 'equalto', 'Primary')
+         | rejectattr('disabled') | map(attribute='name') | list }}
+  no_log: true
+
+- name: Add existing OCP primary zones to router overrides
+  ansible.builtin.set_fact:
+    pfsense_dns_desired_overrides: >-
+      {{ pfsense_dns_desired_overrides + [{'domain': ocp_zone, 'ip': technitium_ocp_nameserver_address}] }}
+  vars:
+    ocp_zone: "{{ hostvars[item].cluster_name }}.{{ hostvars[item].cluster_dns_zone }}"
+  loop: "{{ (groups['ms-ocp-clusters'] + groups['baremetal-ocp-clusters']) | unique | list }}"
+  loop_control:
+    label: "{{ item }}"
+  when: ocp_zone in pfsense_dns_primary_zones
+
+- name: Manage pfSense DNS Resolver overrides by domain
+  pfsense_dns_domain_override:
+    domain: "{{ item.domain }}"
+    ip: "{{ item.ip }}"
+    state: present
+  loop: "{{ pfsense_dns_desired_overrides }}"
+  loop_control:
+    label: "{{ item.domain }} -> {{ item.ip }}"
+  delegate_to: "{{ pfsense_dns_host }}"
+  become: false
+  throttle: 1

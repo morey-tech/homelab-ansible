@@ -6,6 +6,11 @@
       - groups[nodes_group] | length > 0
     fail_msg: Load inventory/dns.yml and the cluster inventory before managing OCP DNS.
 
+- name: Require pfSense inventory for the OCP domain override
+  ansible.builtin.assert:
+    that: hostvars[groups['dns_primary'][0]].pfsense_dns_host in hostvars
+    fail_msg: Use -i inventory/ to include pfSense's SSH connection settings.
+
 - name: Initialize the OCP primary zone records
   ansible.builtin.set_fact:
     technitium_zone_name: "{{ cluster_name }}.{{ cluster_dns_zone }}"
@@ -65,3 +70,12 @@
     apply:
       tags: dns
   tags: dns
+
+- name: Forward the verified OCP zone from pfSense to Technitium
+  pfsense_dns_domain_override:
+    domain: "{{ technitium_zone_name }}"
+    ip: "{{ hostvars[groups['dns_primary'][0]].technitium_ocp_nameserver_address }}"
+    state: present
+  delegate_to: "{{ hostvars[groups['dns_primary'][0]].pfsense_dns_host }}"
+  become: false
+  throttle: 1

@@ -9,5 +9,9 @@ roles/*
 
 vault-password.txt
 
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
 # Private migration input; only encrypted Vault output belongs in Git.
 /var/
