@@ -20,10 +20,9 @@
           - unifi_os_installer_checksum is match('^sha256:[0-9a-f]{64}$')
           - unifi_os_web_port | int >= 1024
           - unifi_os_web_port | int <= 65535
-          - unifi_staging | bool or ansible_host == unifi_final_address
         fail_msg: >-
-          Target the dedicated Ubuntu unifi VM. Keep staging enabled until the
-          old LXC is stopped and the final IP has been transferred separately.
+          Target the dedicated Ubuntu unifi VM with a supported architecture
+          and valid official installer settings.
       tags: always
 
     - name: Inspect existing services
@@ -55,7 +54,7 @@
         name: qemu-guest-agent
         state: started
 
-    - name: Configure staging isolation and host firewall before installation
+    - name: Configure the host firewall before installation
       ansible.builtin.import_tasks: tasks/unifi-firewall.yml
       tags: unifi_firewall
 
@@ -132,21 +131,7 @@
       when: not ansible_check_mode
       tags: unifi_ready
 
-    - name: Verify staging blocks the inform listener from the controller
-      ansible.builtin.wait_for:
-        host: "{{ ansible_host }}"
-        port: 8080
-        state: stopped
-        connect_timeout: 3
-        timeout: 10
-      delegate_to: localhost
-      become: false
-      when:
-        - unifi_staging | bool
-        - not ansible_check_mode
-      tags: unifi_firewall
-
-    - name: Verify the inform listener is reachable after cutover
+    - name: Verify the inform listener is reachable
       ansible.builtin.wait_for:
         host: "{{ ansible_host }}"
         port: 8080
@@ -155,14 +140,9 @@
         timeout: 60
       delegate_to: localhost
       become: false
-      when:
-        - not (unifi_staging | bool)
-        - not ansible_check_mode
+      when: not ansible_check_mode
       tags: unifi_firewall
 
-    - name: Show the setup URL and staging state
+    - name: Show the console URL
       ansible.builtin.debug:
-        msg: >-
-          Console: https://{{ ansible_host }}:{{ unifi_os_web_port }}
-          Staging isolation: {{ unifi_staging | bool }}.
-          Complete setup and restore the Network backup through the console.
+        msg: "Console: https://{{ ansible_host }}:{{ unifi_os_web_port }}"

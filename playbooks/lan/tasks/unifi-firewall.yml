@@ -18,35 +18,14 @@
     direction: outgoing
     default: allow
 
-# UFW skips an insert when the same port already has the opposite action.
-# Remove that rule first, or a staging-to-production transition leaves no rule.
-- name: Remove the opposite device port rules
+- name: Allow UniFi device communication
   community.general.ufw:
-    rule: "{{ 'allow' if unifi_staging | bool else 'deny' }}"
-    direction: in
-    port: "{{ item.port }}"
-    proto: "{{ item.proto }}"
-    delete: true
-  loop: "{{ unifi_device_ports }}"
-
-- name: Set device port rules for staging or production
-  community.general.ufw:
-    rule: "{{ 'deny' if unifi_staging | bool else 'allow' }}"
+    rule: allow
     direction: in
     port: "{{ item.port }}"
     proto: "{{ item.proto }}"
     insert: 1
   loop: "{{ unifi_device_ports }}"
-
-- name: Block controller-initiated device connections during staging
-  community.general.ufw:
-    rule: deny
-    direction: out
-    port: "{{ item.port }}"
-    proto: "{{ item.proto }}"
-    delete: "{{ not (unifi_staging | bool) }}"
-  # SSH replies use the client's ephemeral port; this blocks outbound adoption SSH.
-  loop: "{{ unifi_device_ports + [{'port': '22', 'proto': 'tcp'}] }}"
 
 - name: Enable the firewall
   community.general.ufw:

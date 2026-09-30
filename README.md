@@ -186,17 +186,20 @@ ansible-playbook playbooks/proxmox/pvems-upgrade.yml
 
 ## UniFi Network Controller
 
-The UniFi Network Controller runs on an LXC container on the LAN network.
+UniFi OS Server runs on the dedicated Ubuntu VM `unifi` on QNAP.
 
-- **Web UI**: https://192.168.1.13:8443
+- **Web UI**: https://192.168.1.13:11443
 - **Inform URL**: http://192.168.1.13:8080/inform
 
-### Create/Destroy
+### Provision and verify
 
 ```bash
-ansible-playbook playbooks/lan/lan-unifi-create.yml
-ansible-playbook playbooks/lan/lan-unifi-destroy.yml -e confirm_destroy=yes
+ansible-playbook -i inventory/ playbooks/lan/unifi-os.yml
+ansible-playbook -i inventory/ playbooks/lan/unifi-os.yml --tags unifi_ready
 ```
+
+See the [UniFi runbook](playbooks/lan/README.md) for VM preparation, firewall
+configuration, and maintenance.
 
 ### Adopting Devices
 
