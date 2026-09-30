@@ -1,0 +1,151 @@
+---
+- name: Install official UniFi OS Server on the dedicated Ubuntu VM
+  hosts: unifi
+  become: true
+
+  vars:
+    unifi_installer_path: "/var/cache/unifi-os-server-{{ unifi_os_version }}"
+
+  pre_tasks:
+    - name: Validate the dedicated VM and installation settings
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.hostname == 'unifi'
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.distribution_version is version('24.04', '>=')
+          - ansible_facts.architecture == 'x86_64'
+          - ansible_facts.service_mgr == 'systemd'
+          - ansible_host in ansible_facts.all_ipv4_addresses
+          - unifi_os_installer_url.startswith('https://fw-download.ubnt.com/data/unifi-os-server/')
+          - unifi_os_installer_checksum is match('^sha256:[0-9a-f]{64}$')
+          - unifi_os_web_port | int >= 1024
+          - unifi_os_web_port | int <= 65535
+          - unifi_staging | bool or ansible_host == unifi_final_address
+        fail_msg: >-
+          Target the dedicated Ubuntu unifi VM. Keep staging enabled until the
+          old LXC is stopped and the final IP has been transferred separately.
+
+    - name: Inspect existing services
+      ansible.builtin.service_facts:
+
+    - name: Reject a legacy Network Server on this guest
+      ansible.builtin.assert:
+        that: "'unifi.service' not in ansible_facts.services"
+        fail_msg: This playbook requires a dedicated UniFi OS guest, not an in-place legacy migration.
+
+  tasks:
+    - name: Install official installer prerequisites and guest utilities
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - podman
+          - slirp4netns
+          - passt
+          - uidmap
+          - dbus-user-session
+          - qemu-guest-agent
+          - ufw
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Start the guest agent
+      ansible.builtin.systemd_service:
+        name: qemu-guest-agent
+        state: started
+
+    - name: Configure staging isolation and host firewall before installation
+      ansible.builtin.import_tasks: tasks/unifi-firewall.yml
+
+    - name: Install UniFi OS only when its service is absent
+      when: "'uosserver.service' not in ansible_facts.services"
+      block:
+        - name: Download and verify the pinned official installer
+          ansible.builtin.get_url:
+            url: "{{ unifi_os_installer_url }}"
+            dest: "{{ unifi_installer_path }}"
+            checksum: "{{ unifi_os_installer_checksum }}"
+            owner: root
+            group: root
+            mode: "0755"
+            timeout: 120
+
+        - name: Run the official installer without prompts
+          ansible.builtin.command:
+            argv:
+              - "{{ unifi_installer_path }}"
+              - --non-interactive
+              - --network-mode
+              - pasta
+              - --web-port
+              - "{{ unifi_os_web_port | string }}"
+          async: 1800
+          poll: 15
+          changed_when: true
+          when: not ansible_check_mode
+
+    - name: Enable and start the vendor-managed UniFi OS service
+      ansible.builtin.systemd_service:
+        name: uosserver
+        state: started
+        enabled: true
+        daemon_reload: true
+      when: not ansible_check_mode or 'uosserver.service' in ansible_facts.services
+
+    - name: Verify the console responds over HTTPS from the Ansible controller
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:{{ unifi_os_web_port }}/"
+        # Initial setup uses the vendor-generated self-signed certificate.
+        validate_certs: false
+        status_code: [200, 302]
+        follow_redirects: none
+        timeout: 10
+      delegate_to: localhost
+      become: false
+      register: unifi_console
+      until: unifi_console.status | default(0) in [200, 302]
+      retries: 60
+      delay: 10
+      when: not ansible_check_mode
+      tags: unifi_ready
+
+    - name: Wait for UniFi OS to finish booting and become ready for setup or use
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:{{ unifi_os_web_port }}/api/system"
+        validate_certs: false
+        status_code: 200
+        follow_redirects: none
+        timeout: 10
+      delegate_to: localhost
+      become: false
+      register: unifi_os_readiness
+      # The setup UI shows its boot screen for notReady and an error for error.
+      # A 200 HTML shell, missing state, or an unknown state is not readiness.
+      until:
+        - unifi_os_readiness.status | default(0) == 200
+        - unifi_os_readiness.json | default({}) is mapping
+        - (unifi_os_readiness.json | default({})).get('deviceState', '') in ['notSetup', 'setup']
+      retries: 60
+      delay: 10
+      when: not ansible_check_mode
+      tags: unifi_ready
+
+    - name: Verify staging blocks the inform listener from the controller
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 8080
+        state: stopped
+        connect_timeout: 3
+        timeout: 10
+      delegate_to: localhost
+      become: false
+      when:
+        - unifi_staging | bool
+        - not ansible_check_mode
+
+    - name: Show the setup URL and staging state
+      ansible.builtin.debug:
+        msg: >-
+          Console: https://{{ ansible_host }}:{{ unifi_os_web_port }}
+          Staging isolation: {{ unifi_staging | bool }}.
+          Complete setup and restore the Network backup through the console.

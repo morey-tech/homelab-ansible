@@ -1,0 +1,51 @@
+---
+- name: Preserve SSH and allow the UniFi OS console
+  community.general.ufw:
+    rule: allow
+    port: "{{ item | string }}"
+    proto: tcp
+  loop:
+    - "{{ ansible_port | default(22) }}"
+    - "{{ unifi_os_web_port }}"
+
+- name: Deny unsolicited incoming traffic by default
+  community.general.ufw:
+    direction: incoming
+    default: deny
+
+- name: Allow outgoing downloads and name resolution by default
+  community.general.ufw:
+    direction: outgoing
+    default: allow
+
+- name: Set device port rules for staging or production
+  community.general.ufw:
+    rule: "{{ 'deny' if unifi_staging | bool else 'allow' }}"
+    direction: in
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    insert: 1
+  loop: "{{ unifi_device_ports }}"
+
+- name: Remove the opposite device port rules
+  community.general.ufw:
+    rule: "{{ 'allow' if unifi_staging | bool else 'deny' }}"
+    direction: in
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    delete: true
+  loop: "{{ unifi_device_ports }}"
+
+- name: Block controller-initiated device connections during staging
+  community.general.ufw:
+    rule: deny
+    direction: out
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    delete: "{{ not (unifi_staging | bool) }}"
+  # SSH replies use the client's ephemeral port; this blocks outbound adoption SSH.
+  loop: "{{ unifi_device_ports + [{'port': '22', 'proto': 'tcp'}] }}"
+
+- name: Enable the firewall
+  community.general.ufw:
+    state: enabled
