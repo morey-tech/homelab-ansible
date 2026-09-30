@@ -188,7 +188,7 @@ ansible-playbook playbooks/proxmox/pvems-upgrade.yml
 
 UniFi OS Server runs on the dedicated Ubuntu VM `unifi` on QNAP.
 
-- **Web UI**: https://192.168.1.13:11443
+- **Web UI**: https://unifi.home.morey.tech:11443
 - **Inform URL**: http://192.168.1.13:8080/inform
 
 ### Provision and verify
@@ -200,6 +200,12 @@ ansible-playbook -i inventory/ playbooks/lan/unifi-os.yml --tags unifi_ready
 
 See the [UniFi runbook](playbooks/lan/README.md) for VM preparation, firewall
 configuration, and maintenance.
+
+Configure VM-local Certbot issuance and renewal for the console:
+
+```bash
+ansible-playbook -i inventory/ playbooks/lan/unifi-os.yml --tags unifi_web_tls
+```
 
 ### Adopting Devices
 

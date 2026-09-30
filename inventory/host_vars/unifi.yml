@@ -6,6 +6,9 @@ unifi_os_installer_url: https://fw-download.ubnt.com/data/unifi-os-server/5172-l
 # SHA-256 calculated from the official HTTPS download, not a vendor signature.
 unifi_os_installer_checksum: sha256:f6111e9396a42c74016f5dde9b01fbef486a6fe69efe137935e6e38b7c22f94d
 unifi_os_web_port: 11443
+unifi_web_tls_enabled: true
+unifi_web_domain: unifi.home.morey.tech
+unifi_certbot_email: info+unifi.home@morey.tech
 
 unifi_device_ports:
   - { port: "8080", proto: tcp }

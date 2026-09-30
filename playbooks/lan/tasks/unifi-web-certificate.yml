@@ -1,0 +1,125 @@
+---
+# Nested playbooks do not automatically load the repository-root group_vars.
+- name: Load saved certificate credentials when no token is injected
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../group_vars/all/vault.yml"
+    name: unifi_tls_credentials
+  when: cloudflare_dns_edit_api_token | default('') | length == 0
+  no_log: true
+
+- name: Require Cloudflare DNS validation credentials and certificate settings
+  ansible.builtin.assert:
+    that:
+      - cloudflare_dns_edit_api_token | default(unifi_tls_credentials.cloudflare_dns_edit_api_token | default(''), true) | length > 0
+      - unifi_web_domain is match('^[a-zA-Z0-9][a-zA-Z0-9.-]+[a-zA-Z0-9]$')
+      - unifi_certbot_email | length > 0
+    fail_msg: >-
+      Set cloudflare_dns_edit_api_token in group_vars/all/vault.yml with
+      ansible-vault encrypt_string, or inject it with an AAP credential.
+      Also configure unifi_web_domain and unifi_certbot_email in host variables.
+    quiet: true
+  no_log: true
+
+- name: Install Certbot and the Cloudflare DNS plugin
+  ansible.builtin.apt:
+    name: [certbot, python3-certbot-dns-cloudflare, openssl, python3]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create protected certificate directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/letsencrypt, mode: "0700" }
+    - { path: /etc/letsencrypt/renewal-hooks/deploy, mode: "0755" }
+
+- name: Deploy Cloudflare DNS credentials
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/unifi-cloudflare.ini
+    content: |
+      dns_cloudflare_api_token = {{ cloudflare_dns_edit_api_token | default(unifi_tls_credentials.cloudflare_dns_edit_api_token | default(''), true) }}
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+
+- name: Configure the VM-local certificate deploy hook
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/unifi-os.json
+    content: >-
+      {{ {'domain': unifi_web_domain, 'port': unifi_os_web_port | int,
+          'container': 'uosserver', 'user': 'uosserver'} | to_nice_json }}
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the UniFi OS certificate deploy hook
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../files/unifi/unifi-os-cert-deploy.py"
+    dest: /etc/letsencrypt/renewal-hooks/deploy/unifi-os
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Verify the local certificate API before requesting a certificate
+  ansible.builtin.command:
+    argv: [/etc/letsencrypt/renewal-hooks/deploy/unifi-os, --check-api]
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Obtain the console certificate with Cloudflare DNS validation
+  ansible.builtin.command:
+    argv:
+      - certbot
+      - certonly
+      - --dns-cloudflare
+      - --dns-cloudflare-credentials
+      - /etc/letsencrypt/unifi-cloudflare.ini
+      - --dns-cloudflare-propagation-seconds
+      - "60"
+      - --email
+      - "{{ unifi_certbot_email }}"
+      - --agree-tos
+      - --non-interactive
+      - --cert-name
+      - "{{ unifi_web_domain }}"
+      - --domain
+      - "{{ unifi_web_domain }}"
+    creates: "/etc/letsencrypt/live/{{ unifi_web_domain }}/fullchain.pem"
+
+# Repairs deployment if a previous renewal issued a certificate but its hook failed.
+- name: Import and activate the current certificate through UniFi OS
+  ansible.builtin.command:
+    argv: [/etc/letsencrypt/renewal-hooks/deploy/unifi-os]
+  register: unifi_certificate_deploy
+  changed_when: "'Certificate deployed' in unifi_certificate_deploy.stdout"
+  when: not ansible_check_mode
+
+- name: Enable automatic certificate renewal on the VM
+  ansible.builtin.systemd_service:
+    name: certbot.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Verify trusted console HTTPS from the Ansible controller
+  ansible.builtin.uri:
+    url: "https://{{ unifi_web_domain }}:{{ unifi_os_web_port }}/"
+    validate_certs: true
+    use_proxy: false
+    status_code: [200, 302]
+    follow_redirects: none
+    timeout: 10
+  delegate_to: localhost
+  become: false
+  register: unifi_trusted_https
+  until: unifi_trusted_https.status | default(0) in [200, 302]
+  retries: 12
+  delay: 5
+  when: not ansible_check_mode

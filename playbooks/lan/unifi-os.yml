@@ -143,6 +143,11 @@
       when: not ansible_check_mode
       tags: unifi_firewall
 
+    - name: Configure automatic console certificates
+      ansible.builtin.import_tasks: tasks/unifi-web-certificate.yml
+      when: unifi_web_tls_enabled | default(false) | bool
+      tags: unifi_web_tls
+
     - name: Show the console URL
       ansible.builtin.debug:
-        msg: "Console: https://{{ ansible_host }}:{{ unifi_os_web_port }}"
+        msg: "Console: https://{{ unifi_web_domain if unifi_web_tls_enabled | default(false) | bool else ansible_host }}:{{ unifi_os_web_port }}"
