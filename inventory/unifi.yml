@@ -2,8 +2,7 @@
 all:
   hosts:
     unifi:
-      # Temporary DHCP reservation for the new Ubuntu VM.
-      # 192.168.1.13 belongs to the old UniFi LXC until cutover.
-      ansible_host: 192.168.1.26
+      # Final DHCP reservation for the QNAP Ubuntu VM; the legacy LXC is stopped.
+      ansible_host: 192.168.1.13
       ansible_user: morey-tech
       ansible_ssh_use_tty: false

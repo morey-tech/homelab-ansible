@@ -131,3 +131,14 @@ After stopping the old LXC and transferring the final address, update
 Rerun `playbooks/lan/unifi-os.yml` to open the declared device ports and remove
 the staging egress blocks. The playbook refuses production mode at a temporary
 address, but does not stop the old LXC, change DHCP, or perform the IP cutover.
+
+On an already provisioned VM, apply only the firewall changes and test TCP 8080:
+
+```bash
+ansible-playbook -i inventory/ playbooks/lan/unifi-os.yml --tags unifi_firewall
+```
+
+UFW skips inserting a rule if the same port already has the opposite action,
+so the tasks remove the obsolete rule before inserting its replacement. The
+connectivity check requires port 8080 to be blocked during staging and reachable
+after cutover. Ping and HTTPS access alone do not verify device inform access.

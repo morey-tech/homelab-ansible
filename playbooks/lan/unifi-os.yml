@@ -24,6 +24,7 @@
         fail_msg: >-
           Target the dedicated Ubuntu unifi VM. Keep staging enabled until the
           old LXC is stopped and the final IP has been transferred separately.
+      tags: always
 
     - name: Inspect existing services
       ansible.builtin.service_facts:
@@ -56,6 +57,7 @@
 
     - name: Configure staging isolation and host firewall before installation
       ansible.builtin.import_tasks: tasks/unifi-firewall.yml
+      tags: unifi_firewall
 
     - name: Install UniFi OS only when its service is absent
       when: "'uosserver.service' not in ansible_facts.services"
@@ -142,6 +144,21 @@
       when:
         - unifi_staging | bool
         - not ansible_check_mode
+      tags: unifi_firewall
+
+    - name: Verify the inform listener is reachable after cutover
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 8080
+        state: started
+        connect_timeout: 3
+        timeout: 60
+      delegate_to: localhost
+      become: false
+      when:
+        - not (unifi_staging | bool)
+        - not ansible_check_mode
+      tags: unifi_firewall
 
     - name: Show the setup URL and staging state
       ansible.builtin.debug:

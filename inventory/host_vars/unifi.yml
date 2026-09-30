@@ -8,7 +8,7 @@ unifi_os_installer_checksum: sha256:f6111e9396a42c74016f5dde9b01fbef486a6fe69efe
 unifi_os_web_port: 11443
 
 # Keep enabled during setup and backup inspection. Disable only after cutover.
-unifi_staging: true
+unifi_staging: false
 unifi_final_address: 192.168.1.13
 unifi_device_ports:
   - { port: "8080", proto: tcp }

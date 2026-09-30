@@ -18,15 +18,8 @@
     direction: outgoing
     default: allow
 
-- name: Set device port rules for staging or production
-  community.general.ufw:
-    rule: "{{ 'deny' if unifi_staging | bool else 'allow' }}"
-    direction: in
-    port: "{{ item.port }}"
-    proto: "{{ item.proto }}"
-    insert: 1
-  loop: "{{ unifi_device_ports }}"
-
+# UFW skips an insert when the same port already has the opposite action.
+# Remove that rule first, or a staging-to-production transition leaves no rule.
 - name: Remove the opposite device port rules
   community.general.ufw:
     rule: "{{ 'allow' if unifi_staging | bool else 'deny' }}"
@@ -34,6 +27,15 @@
     port: "{{ item.port }}"
     proto: "{{ item.proto }}"
     delete: true
+  loop: "{{ unifi_device_ports }}"
+
+- name: Set device port rules for staging or production
+  community.general.ufw:
+    rule: "{{ 'deny' if unifi_staging | bool else 'allow' }}"
+    direction: in
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    insert: 1
   loop: "{{ unifi_device_ports }}"
 
 - name: Block controller-initiated device connections during staging
