@@ -1,0 +1,21 @@
+---
+# Adopted from VPN > Tailscale on the existing router.
+pfsense_tailscale_settings:
+  enable: true
+  listenport: 41641
+  statedir: /usr/local/pkg/tailscale/state
+  keepconfig: true
+  acceptdns: true
+  exitnode: true
+  acceptroutes: false
+  row:
+    - advertisedroutevalue: 192.168.6.0/24
+      advertisedroutedescr: RH_LAB
+    - advertisedroutevalue: 192.168.3.0/24
+      advertisedroutedescr: LAB
+    - advertisedroutevalue: 192.168.1.0/24
+      advertisedroutedescr: LAN
+  syslogenable: false
+  syslogpriority: notice
+  syslogfacility: daemon
+pfsense_tailscale_bootstrap_interactive: true

@@ -1,0 +1,148 @@
+---
+- name: Install and configure the pfSense Tailscale package
+  hosts: pfsense.home.morey.tech
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Check for pfSense
+      ansible.builtin.stat:
+        path: /etc/inc/config.inc
+      register: tailscale_pfsense_config
+
+    - name: Require pfSense and explicit package preferences
+      ansible.builtin.assert:
+        that:
+          - tailscale_pfsense_config.stat.exists
+          - pfsense_tailscale_settings.enable | bool
+        fail_msg: This playbook requires pfSense with explicit enabled Tailscale settings in host_vars.
+
+    - name: Install the pfSense-managed Tailscale package
+      community.general.pkgng:
+        name: pfSense-pkg-Tailscale
+        state: present
+
+    - name: Check whether the package configuration hook is available
+      ansible.builtin.stat:
+        path: /usr/local/pkg/tailscale/tailscale.inc
+      register: tailscale_package_hook
+
+    - name: Configure persistent Tailscale package preferences
+      pfsense_tailscale:
+        settings: "{{ pfsense_tailscale_settings }}"
+      no_log: true
+      when: tailscale_package_hook.stat.exists
+
+    - name: Explain fresh-install check mode
+      ansible.builtin.debug:
+        msg: Package installation is planned; settings and connection checks require the installed package.
+      when: ansible_check_mode and not tailscale_package_hook.stat.exists
+
+    - name: Check whether the daemon is running
+      ansible.builtin.command:
+        argv: [/usr/sbin/service, tailscaled, onestatus]
+      register: tailscale_daemon
+      changed_when: false
+      failed_when: tailscale_daemon.rc not in [0, 1]
+      check_mode: false
+      when: tailscale_package_hook.stat.exists
+
+    - name: Start the enabled service through the package hook when stopped
+      pfsensible.core.pfsense_phpshell:
+        cmd: |
+          require_once("tailscale/tailscale.inc");
+          tailscale_service_checkpoint();
+      changed_when: true
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - tailscale_daemon.rc | default(1) != 0
+
+    - name: Read Tailscale connection state
+      ansible.builtin.command:
+        argv: [/usr/local/bin/tailscale, status, --json]
+      register: tailscale_initial_status
+      changed_when: false
+      failed_when: false
+      until: (tailscale_initial_status.stdout | default('{}', true) | from_json).BackendState | default('') in ['Running', 'NeedsLogin', 'NeedsMachineAuth']
+      retries: 12
+      delay: 5
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Require interactive enrollment when the node needs authentication
+      ansible.builtin.assert:
+        that: pfsense_tailscale_bootstrap_interactive | bool
+        fail_msg: Authenticate pfSense under VPN > Tailscale before an unattended run.
+      when:
+        - not ansible_check_mode
+        - (tailscale_initial_status.stdout | from_json).BackendState != 'Running'
+
+    - name: Wait for the administrator to authenticate Tailscale
+      ansible.builtin.pause:
+        prompt: >-
+          Open pfSense VPN > Tailscale > Authentication and enroll this router using
+          a Tailscale auth key, then enable it under Settings if needed. Approve the
+          device, advertised subnet routes, and exit-node use in the Tailscale admin
+          console as required. Do not paste the key here or commit it to Git.
+          Press Enter once VPN > Tailscale > Status shows connected.
+      when:
+        - not ansible_check_mode
+        - (tailscale_initial_status.stdout | from_json).BackendState != 'Running'
+
+    - name: Verify Tailscale is connected
+      ansible.builtin.command:
+        argv: [/usr/local/bin/tailscale, status, --json]
+      register: tailscale_connected
+      changed_when: false
+      until:
+        - tailscale_connected.rc == 0
+        - (tailscale_connected.stdout | from_json).BackendState == 'Running'
+        - (tailscale_connected.stdout | from_json).Self.Online | bool
+      retries: 12
+      delay: 5
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Read effective Tailscale preferences
+      ansible.builtin.command:
+        argv: [/usr/local/bin/tailscale, debug, prefs]
+      register: tailscale_prefs
+      changed_when: false
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Verify effective DNS and routing preferences
+      ansible.builtin.assert:
+        that:
+          - prefs.CorpDNS == pfsense_tailscale_settings.acceptdns
+          - prefs.RouteAll == pfsense_tailscale_settings.acceptroutes
+          - prefs.AdvertiseRoutes | default([], true) | sort == expected_routes | sort
+        fail_msg: Effective Tailscale preferences differ from the pfSense package settings.
+      vars:
+        prefs: "{{ tailscale_prefs.stdout | from_json }}"
+        expected_routes: >-
+          {{ pfsense_tailscale_settings.row | map(attribute='advertisedroutevalue') | list
+             + (['0.0.0.0/0', '::/0'] if pfsense_tailscale_settings.exitnode else []) }}
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Test the router's own MagicDNS name through Tailscale
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/drill
+          - '@100.100.100.100'
+          - "{{ (tailscale_connected.stdout | from_json).Self.DNSName }}"
+          - A
+      register: tailscale_dns_test
+      changed_when: false
+      failed_when: >-
+        tailscale_dns_test.rc != 0 or 'rcode: NOERROR' not in tailscale_dns_test.stdout
+        or 'ANSWER: 0' in tailscale_dns_test.stdout
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Report Tailscale verification
+      ansible.builtin.debug:
+        msg: Tailscale is connected; advertised routes, DNS preferences, and MagicDNS checks passed.
+      when: not ansible_check_mode
