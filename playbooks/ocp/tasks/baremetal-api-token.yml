@@ -1,0 +1,13 @@
+---
+- name: Obtain an Assisted Installer API access token
+  ansible.builtin.uri:
+    url: https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: refresh_token
+      client_id: cloud-services
+      refresh_token: "{{ rh_console_offline_token }}"
+    status_code: 200
+  register: assisted_token
+  no_log: true

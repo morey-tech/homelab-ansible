@@ -19,6 +19,14 @@ password-file setting with the injected credential path as appropriate for the e
 
 ### Installing Collections
 
+The Assisted Installer modules also require `requests` in the Python environment
+running Ansible. The AAP execution environment includes it; install it for local
+runs as well:
+
+```bash
+python3 -m pip install requests
+```
+
 ```bash
 ansible-galaxy collection install -r requirements.yml
 ```
@@ -54,15 +62,79 @@ In AAP, add an [AAP Survey](https://docs.redhat.com/en/documentation/red_hat_ans
 
 ### Bare-Metal OCP (Two-Stage Process)
 
-Bare-metal OCP cluster creation requires a manual step (booting from USB). Run in two stages:
+The bare-metal playbooks default to `ocp-mgmt.rh-lab.morey.tech`, replacing the
+old management SNO and standalone GPU cluster with this layout from
+[homelab #187](https://github.com/morey-tech/homelab/issues/187):
+
+| Physical node | Node address | Role |
+| --- | --- | --- |
+| `ms-02` / Desktop Nick | `192.168.6.91` | Schedulable control plane |
+| `ms-03` | `192.168.6.92` | Schedulable control plane |
+| `ms-04` | `192.168.6.93` | Schedulable control plane |
+| `tr-gpu` | `192.168.6.94` | Worker |
+
+The API VIP is `192.168.6.90`; ingress uses `192.168.6.98`. Node DNS names are
+`<physical-node>.ocp-mgmt.rh-lab.morey.tech`. Inventory requests the `4.22`
+stream; Assisted Installer must offer that version when preparing the cluster.
+The existing `ocp-home` SNO on `ms-01` retains its inventory settings. To target
+another bare-metal cluster explicitly, pass `-e baremetal_cluster=<inventory-host>`.
+
+Before preparing, remove conflicting old DNS/DHCP/static assignments and exclude
+`.90`–`.98` from dynamic DHCP. Each node uses a two-port 10GbE LACP bond
+with MTU 1500 on the untagged RH lab network (VLAN 6 on the switch). Configure
+the switch LAGs and validate that network before booting the ISO. The ISO maps
+logical NIC names to the permanent MAC addresses in `inventory/rh-lab.yml`;
+bond slaves can show the same current MAC while running. On the three MS nodes,
+the same mapping explicitly disables the two unused 2.5GbE interfaces so they
+cannot obtain native-LAN IPv4 or IPv6 addresses alongside the cluster bond.
+
+Run in two stages, with a manual USB boot between them. Provide the Red Hat
+offline token and pull secret via AAP credentials or the repository Vault file
+for local execution:
 
 ```bash
-# Stage 1: Create cluster, configure DNS/DHCP, download Discovery ISO
-ansible-playbook playbooks/ocp/baremetal-ocp-prepare.yml
+# Offline inventory validation and ISO network rendering only
+ansible-playbook playbooks/ocp/baremetal-ocp-prepare.yml --tags preflight
 
-# Write the ISO to USB, boot each node, then run stage 2:
-ansible-playbook playbooks/ocp/baremetal-ocp-install.yml
+# Stage 1: Create cluster, configure DNS/DHCP, download Discovery ISO
+ansible-playbook playbooks/ocp/baremetal-ocp-prepare.yml -e @group_vars/all/vault.yml
 ```
+
+If an old `ocp-mgmt` installer record still exists, inspect it first and rerun
+stage 1 with `-e recreate=true` to replace that record. Existing records with a
+different version or topology are rejected rather than silently reused.
+
+The `ocp-mgmt` inventory requests a `minimal-iso`; each host therefore needs
+working network and DNS while booting so it can download the RHCOS rootfs. The
+ISO downloads to `var/<cluster-name>-<cluster-id>-discovery.iso` in the
+repository. That directory is gitignored and bind-mounted to the laptop when
+using the devcontainer, so the host can read the image directly. Override
+`discovery_iso_host` and `discovery_iso_directory` to save it on another
+persistent, reachable host when using AAP. Desktop Nick is now a cluster node
+and is no longer the download destination.
+
+Write the ISO to USB and boot all four machines. In Assisted Installer's
+discovered hardware inventory, identify each intended 500 GB OS disk by its
+model/serial and copy its exact disk `id` into that node's
+`installation_disk_id` in `inventory/rh-lab.yml`. The current four IDs were
+recorded from discovered hardware; do not substitute an assumed `/dev/nvme0n1`
+path. Keep the 2 TB data, model-cache, and scratch disks separate.
+
+```bash
+# Stage 2: Match hardware, assign roles and OS disks, then install
+ansible-playbook playbooks/ocp/baremetal-ocp-install.yml -e @group_vars/all/vault.yml
+```
+
+Stage 2 matches each machine by its configured bond MAC, assigns the three
+MS nodes as masters and `tr-gpu` as a worker, and gives each node a distinct
+`topology.kubernetes.io/zone` label. It selects only the specified OS disk and
+marks the other discovered disks to skip formatting. It checks the resulting
+host assignments and cluster readiness before starting installation. If discovery
+or readiness takes longer than four minutes, inspect Assisted Installer's
+validation messages and rerun stage 2 after resolving them.
+
+GPU operators, GPU workload placement, and Intel-only KubeVirt placement are
+subsequent cluster configuration steps.
 
 ### Execution Environment (EE)
 

@@ -1,0 +1,44 @@
+---
+- name: Authenticate to Assisted Installer
+  ansible.builtin.include_tasks: baremetal-api-token.yml
+
+- name: Wait for all expected hosts to report hardware inventory
+  ansible.builtin.uri:
+    url: "https://api.openshift.com/api/assisted-install/v2/clusters/{{ cluster_id }}"
+    headers:
+      Authorization: "Bearer {{ assisted_token.json.access_token }}"
+    status_code: 200
+  register: discovered_cluster
+  until:
+    - discovered_cluster.json.hosts | length >= groups[nodes_group] | length
+    - discovered_cluster.json.hosts | selectattr('inventory', 'defined') | selectattr('inventory') | list | length == discovered_cluster.json.hosts | length
+  retries: 24
+  delay: 10
+  no_log: true
+
+- name: Require the prepared compact cluster before configuring hardware
+  ansible.builtin.assert:
+    that:
+      - discovered_cluster.json.high_availability_mode == 'Full'
+      - discovered_cluster.json.schedulable_masters | bool
+      - discovered_cluster.json.openshift_version is match('^' ~ (cluster_version | regex_escape) ~ '(\\.|$)')
+    fail_msg: Run baremetal-ocp-prepare.yml with the requested version and compact topology first.
+
+- name: Validate every physical host and OS disk before changing installer settings
+  ansible.builtin.set_fact:
+    baremetal_host_configuration: "{{ discovered_cluster.json.hosts | baremetal_host_plan(groups[nodes_group] | map('extract', hostvars) | list) }}"
+
+- name: Assign hostnames, roles, OS disks, and physical failure domains
+  ansible.builtin.uri:
+    url: "https://api.openshift.com/api/assisted-install/v2/infra-envs/{{ item.infra_env_id }}/hosts/{{ item.id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ assisted_token.json.access_token }}"
+    body_format: json
+    body: "{{ item.body }}"
+    status_code: 201
+  loop: "{{ baremetal_host_configuration }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+  no_log: true

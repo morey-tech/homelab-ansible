@@ -3,11 +3,26 @@
 # After this playbook completes, write the ISO to USB and boot each bare-metal node.
 # Then run baremetal-ocp-install.yml to wait for host discovery and install the cluster.
 - name: Prepare bare-metal OCP cluster
-  hosts: baremetal-ocp-clusters
+  hosts: "{{ baremetal_cluster | default('ocp-mgmt.rh-lab.morey.tech') }}"
   gather_facts: false  # Hosts aren't available, since this playbook creates them.
 
   vars:
     recreate: false
+    discovery_iso_host: localhost
+    # The workspace is bind-mounted by the devcontainer, so files here are
+    # directly accessible from the host laptop. The repository ignores var/.
+    discovery_iso_directory: "{{ playbook_dir }}/../../var"
+
+  pre_tasks:
+    - name: Validate the bare-metal inventory
+      ansible.builtin.import_tasks: tasks/baremetal-validate.yml
+      tags: always
+
+    - name: Build static network configuration from each node's inventory
+      ansible.builtin.set_fact:
+        static_network_config: "{{ lookup('template', 'baremetal-static-network.json.j2') | from_json }}"
+      when: configure_baremetal_hosts | default(false) | bool
+      tags: always
 
   tasks:
     - name: Assisted Installer
@@ -31,13 +46,25 @@
 
         - name: Delete Existing Discovery ISOs
           ansible.builtin.file:
-            path: "/tmp/{{ cluster_name }}-{{ item.id }}-discovery.iso"
+            path: "{{ discovery_iso_directory }}/{{ cluster_name }}-{{ item.id }}-discovery.iso"
             state: absent
           loop: "{{ listclusters.result | selectattr('name', 'equalto', cluster_name) | list }}"
           loop_control:
             label: "{{ item.name }}, {{ item.id }}"
           when: recreate | bool
-          delegate_to: "desktop-nick.home.morey.tech"  # Pick a host from the hypervisor group
+          delegate_to: "{{ discovery_iso_host }}"
+
+        - name: Require an unambiguous existing cluster with the requested topology
+          ansible.builtin.assert:
+            that:
+              - existing_clusters | length <= 1
+              - existing_clusters | length == 0 or existing_clusters[0].high_availability_mode == ('Full' if groups[nodes_group] | length >= 3 else 'None')
+              - existing_clusters | length == 0 or existing_clusters[0].schedulable_masters == (schedulable_masters | default(false) | bool)
+              - existing_clusters | length == 0 or existing_clusters[0].openshift_version is match('^' ~ (cluster_version | regex_escape) ~ '(\\.|$)')
+            fail_msg: The existing installer differs from this inventory. Review it and use -e recreate=true to replace its record.
+          vars:
+            existing_clusters: "{{ listclusters.result | selectattr('name', 'equalto', cluster_name) | list }}"
+          when: not recreate | bool
 
         - name: Set cluster_id to existing installer
           ansible.builtin.set_fact:
@@ -54,6 +81,7 @@
             pull_secret: "{{ rh_console_pull_secret | to_json }}"
             # If node group is less than 3, set high availability mode to None for SNO.
             high_availability_mode: "{{ 'Full' if groups[nodes_group] | length >= 3 else 'None' }}"
+            schedulable_masters: "{{ schedulable_masters | default(omit) }}"
             cluster_network_cidr: "{{ cluster_network_cidr }}"
             cluster_network_host_prefix: "{{ cluster_network_host_prefix }}"
             service_networks: "{{ service_networks }}"
@@ -103,17 +131,24 @@
         static_network_config: "{{ static_network_config }}"
       register: newinfraenv
 
-    - name: Download Discovery ISO to desktop-nick
+    - name: Create the discovery ISO directory
+      ansible.builtin.file:
+        path: "{{ discovery_iso_directory }}"
+        state: directory
+        mode: '0700'
+      delegate_to: "{{ discovery_iso_host }}"
+
+    - name: Download Discovery ISO
       ansible.builtin.get_url:
         url: "{{ newinfraenv.result.download_url }}"
-        dest: "/tmp/{{ cluster_name }}-{{ cluster_id }}-discovery.iso"
-        mode: '0777'
+        dest: "{{ discovery_iso_directory }}/{{ cluster_name }}-{{ cluster_id }}-discovery.iso"
+        mode: '0600'
         force: true
-      delegate_to: "desktop-nick.home.morey.tech"  # Pick a host from the hypervisor group
+      delegate_to: "{{ discovery_iso_host }}"
 
     - name: Print next steps
       ansible.builtin.debug:
         msg:
           - "Assisted Installer: https://console.redhat.com/openshift/assisted-installer/clusters/{{ cluster_id }}"
-          - "ISO downloaded to desktop-nick: /tmp/{{ cluster_name }}-{{ cluster_id }}-discovery.iso"
-          - "Write the ISO to USB, boot each node, then run baremetal-ocp-install.yml"
+          - "ISO downloaded to {{ discovery_iso_host }}: {{ discovery_iso_directory }}/{{ cluster_name }}-{{ cluster_id }}-discovery.iso"
+          - "Write the ISO to USB and boot each node. Record the intended OS disk IDs in inventory before running baremetal-ocp-install.yml."

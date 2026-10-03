@@ -5,6 +5,9 @@ rh-lab:
     ocp-lab-nodes:
     ocp-dev-nodes:
     ocp-prd-nodes:
+    baremetal-ocp-clusters:
+    ocp-mgmt-nodes:
+    ocp-home-nodes:
   vars:
     cluster_dns_zone: "rh-lab.morey.tech"
     machine_networks:
@@ -109,21 +112,42 @@ ms-ocp-clusters:
 
 ocp-mgmt-nodes:
   hosts:
-    ocp-mgmt-01.rh-lab.morey.tech:
-      mac_address: 58:47:ca:7f:04:94  # 58:47:ca:7f:04:95
+    ms-02.ocp-mgmt.rh-lab.morey.tech:
       ip_address: 192.168.6.91
+      mac_address: 58:47:ca:77:c5:ce
+      bond_mac_addresses: ['58:47:ca:77:c5:ce', '58:47:ca:77:c5:cf']
+      disabled_interface_mac_addresses: ['58:47:ca:77:c5:d0', '58:47:ca:77:c5:d1']
+      node_role: master
+      # OS disk: Crucial CT500P3PSSD8 500 GB, serial 24364AF88127.
+      installation_disk_id: "/dev/disk/by-id/nvme-eui.000000000000000100a075244af88127"
+    ms-03.ocp-mgmt.rh-lab.morey.tech:
+      ip_address: 192.168.6.92
+      mac_address: 58:47:ca:7a:b4:42
+      bond_mac_addresses: ['58:47:ca:7a:b4:42', '58:47:ca:7a:b4:43']
+      disabled_interface_mac_addresses: ['58:47:ca:7a:b4:44', '58:47:ca:7a:b4:45']
+      node_role: master
+      # OS disk: Crucial CT500P3PSSD8 500 GB, serial 24364AF8841B.
+      installation_disk_id: "/dev/disk/by-id/nvme-eui.000000000000000100a075244af8841b"
+    ms-04.ocp-mgmt.rh-lab.morey.tech:
+      ip_address: 192.168.6.93
+      mac_address: 58:47:ca:7a:b5:36
+      bond_mac_addresses: ['58:47:ca:7a:b5:36', '58:47:ca:7a:b5:37']
+      disabled_interface_mac_addresses: ['58:47:ca:7a:b5:38', '58:47:ca:7a:b5:39']
+      node_role: master
+      # OS disk: Crucial CT500P3PSSD8 500 GB, serial 24364AF88515.
+      installation_disk_id: "/dev/disk/by-id/nvme-eui.000000000000000100a075244af88515"
+    tr-gpu.ocp-mgmt.rh-lab.morey.tech:
+      ip_address: 192.168.6.94
+      mac_address: 00:1b:21:81:50:d0
+      bond_mac_addresses: ['00:1b:21:81:50:d0', '00:1b:21:81:50:d1']
+      disabled_interface_mac_addresses: []
+      node_role: worker
+      # OS disk: Samsung SSD 850 EVO 500 GB, serial S3PTNB0J813751L.
+      # Replaces the Kingston NV2; retain the Samsung 990 PRO and WD SN750 data disks.
+      installation_disk_id: "/dev/disk/by-id/wwn-0x5002538d4229d04e"
   vars:
-    # cores: 8
-    # memory: 16384
-
-ocp-gpu-nodes:
-  hosts:
-    ocp-gpu-01.rh-lab.morey.tech:
-      mac_address: 00:1b:21:81:50:d0  # 00:1b:21:81:50:d1
-      ip_address: 192.168.6.81
-  vars:
-    # cores: 8
-    # memory: 16384
+    ansible_user: core
+    ansible_host: "{{ ip_address }}"
 
 ocp-home-nodes:
   hosts:
@@ -138,86 +162,16 @@ baremetal-ocp-clusters:
   hosts:
     ocp-mgmt.rh-lab.morey.tech:
       cluster_name: ocp-mgmt
-      cluster_version: 4.18.28
+      cluster_version: "4.22"  # Use the supported 4.22 release offered by Assisted Installer.
       cluster_dns_zone: "rh-lab.morey.tech"
       nodes_group: ocp-mgmt-nodes
+      schedulable_masters: true
+      configure_baremetal_hosts: true
+      image_type: "minimal-iso"
       api_vips: [ip: '192.168.6.90']
       ingress_vips: [ip: '192.168.6.98']
-      static_network_config:
-        - network_yaml: |
-            interfaces:
-              - name: bond0
-                type: bond
-                state: up
-                ipv4:
-                  address:
-                    - ip: 192.168.6.91
-                      prefix-length: 24
-                  enabled: true
-                  dhcp: false
-                link-aggregation:
-                  mode: 802.3ad
-                  options:
-                    miimon: '100'
-                  port:
-                    - enp3s0f0
-                    - enp3s0f1
-            dns-resolver:
-              config:
-                server:
-                  - 192.168.6.1
-            routes:
-              config:
-                - destination: 0.0.0.0/0
-                  next-hop-address: 192.168.6.1
-                  next-hop-interface: bond0
-                  table-id: 254
-          mac_interface_map:
-            - mac_address: "58:47:ca:7f:04:94"
-              logical_nic_name: "enp3s0f0"
-            - mac_address: "58:47:ca:7f:04:95"
-              logical_nic_name: "enp3s0f1"
-    ocp-gpu.rh-lab.morey.tech:
-      cluster_name: ocp-gpu
-      cluster_version: 4.20.4
-      cluster_dns_zone: "rh-lab.morey.tech"
-      nodes_group: ocp-gpu-nodes
-      api_vips: [ip: '192.168.6.80']
-      ingress_vips: [ip: '192.168.6.88']
-      static_network_config:
-        - network_yaml: |
-            interfaces:
-              - name: bond0
-                type: bond
-                state: up
-                ipv4:
-                  address:
-                    - ip: 192.168.6.81
-                      prefix-length: 24
-                  enabled: true
-                  dhcp: false
-                link-aggregation:
-                  mode: 802.3ad
-                  options:
-                    miimon: '100'
-                  port:
-                    - enp3s0f0
-                    - enp3s0f1
-            dns-resolver:
-              config:
-                server:
-                  - 192.168.6.1
-            routes:
-              config:
-                - destination: 0.0.0.0/0
-                  next-hop-address: 192.168.6.1
-                  next-hop-interface: bond0
-                  table-id: 254
-          mac_interface_map:
-            - mac_address: "00:1b:21:81:50:d0"
-              logical_nic_name: "enp3s0f0"
-            - mac_address: "00:1b:21:81:50:d1"
-              logical_nic_name: "enp3s0f1"
+      bond_interfaces: ['eno1', 'eno2']  # Logical names mapped to permanent MACs in the ISO.
+      bond_mtu: 1500
     ocp-home.rh-lab.morey.tech:
       cluster_name: ocp-home
       cluster_version: 4.18.28
@@ -262,6 +216,7 @@ baremetal-ocp-clusters:
   vars:
     ansible_host: localhost
     ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
     cluster_network_cidr: "10.128.0.0/14"
     cluster_network_host_prefix: "23"
     service_networks:

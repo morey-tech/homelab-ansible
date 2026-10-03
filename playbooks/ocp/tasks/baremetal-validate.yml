@@ -1,0 +1,37 @@
+---
+- name: Validate the compact cluster topology
+  ansible.builtin.assert:
+    that:
+      - groups[nodes_group] | length == 4
+      - cluster_nodes | selectattr('node_role', 'equalto', 'master') | list | length == 3
+      - cluster_nodes | selectattr('node_role', 'equalto', 'worker') | list | length == 1
+      - schedulable_masters | bool
+      - cluster_nodes | map(attribute='ip_address') | unique | length == 4
+      - cluster_macs | unique | length == 8
+      - disabled_macs | unique | length == 6
+      - (cluster_macs + disabled_macs) | unique | length == 14
+      - bond_interfaces | length == 2
+    fail_msg: Require three schedulable control-plane nodes, one worker, unique node IPs, and unique bond/disabled NIC MACs.
+  vars:
+    cluster_nodes: "{{ groups[nodes_group] | map('extract', hostvars) | list }}"
+    cluster_macs: "{{ cluster_nodes | map(attribute='bond_mac_addresses') | flatten | map('lower') | list }}"
+    disabled_macs: "{{ cluster_nodes | map(attribute='disabled_interface_mac_addresses') | flatten | map('lower') | list }}"
+  when: configure_baremetal_hosts | default(false) | bool
+
+- name: Validate each node's bond and address
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].bond_mac_addresses | length == 2
+      - hostvars[item].bond_mac_addresses | select('match', '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$') | list | length == 2
+      - hostvars[item].mac_address == hostvars[item].bond_mac_addresses[0]
+      - disabled_macs | length == (2 if hostvars[item].node_role == 'master' else 0)
+      - valid_disabled_macs | length == disabled_macs | length
+      - node_macs | unique | length == node_macs | length
+      - hostvars[item].ip_address not in (api_vips + ingress_vips) | map(attribute='ip') | list
+    fail_msg: "Check the permanent bond/disabled NIC MACs and node IP for {{ item }}."
+  vars:
+    disabled_macs: "{{ hostvars[item].disabled_interface_mac_addresses }}"
+    valid_disabled_macs: "{{ disabled_macs | select('match', '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$') | list }}"
+    node_macs: "{{ hostvars[item].bond_mac_addresses + disabled_macs }}"
+  loop: "{{ groups[nodes_group] }}"
+  when: configure_baremetal_hosts | default(false) | bool

@@ -2,15 +2,31 @@
 # Stage 2 of 2: Wait for bare-metal nodes to boot from ISO, then install the cluster.
 # Run this after baremetal-ocp-prepare.yml once all nodes have booted from the Discovery ISO.
 - name: Install bare-metal OCP cluster
-  hosts: baremetal-ocp-clusters
+  hosts: "{{ baremetal_cluster | default('ocp-mgmt.rh-lab.morey.tech') }}"
   gather_facts: false
 
+  pre_tasks:
+    - name: Validate the bare-metal inventory
+      ansible.builtin.import_tasks: tasks/baremetal-validate.yml
+
+    - name: Require an explicitly selected OS disk for each node
+      ansible.builtin.assert:
+        that: hostvars[item].installation_disk_id | default('') | length > 0
+        fail_msg: "Set installation_disk_id for {{ item }} from discovered hardware before installing."
+      loop: "{{ groups[nodes_group] }}"
+      when: configure_baremetal_hosts | default(false) | bool
+
   tasks:
-    - name: Look up existing cluster_id
+    - name: Look up existing cluster_id  # noqa: run-once[task]
       rhpds.assisted_installer.list_clusters:
         offline_token: "{{ rh_console_offline_token }}"
       register: listclusters
       run_once: true
+
+    - name: Require exactly one matching cluster record
+      ansible.builtin.assert:
+        that: listclusters.result | selectattr('name', 'equalto', cluster_name) | list | length == 1
+        fail_msg: Run baremetal-ocp-prepare.yml and resolve duplicate installer records first.
 
     - name: Set cluster_id from existing installer
       ansible.builtin.set_fact:
@@ -20,15 +36,38 @@
       ansible.builtin.debug:
         msg: "{{ cluster_id }}"
 
-    - name: Wait for the hosts to be ready
-      rhpds.assisted_installer.wait_for_hosts:
-        cluster_id: "{{ cluster_id }}"
-        offline_token: "{{ rh_console_offline_token }}"
-        expected_hosts: "{{ groups[nodes_group] | length }}"
-        wait_timeout: 300  # Usually ready in 3 - 4 minutes with "full" discovery ISO.
-      register: wait_for_hosts
-      until: wait_for_hosts.result.status == "ready"
-      retries: 3  # On the off chance that the request fails.
+    - name: Configure the discovered physical machines
+      ansible.builtin.include_tasks: tasks/baremetal-configure-hosts.yml
+      when: configure_baremetal_hosts | default(false) | bool
+
+    - name: Refresh the API access token before readiness checks
+      ansible.builtin.include_tasks: tasks/baremetal-api-token.yml
+
+    - name: Wait for the configured cluster to be ready
+      ansible.builtin.uri:
+        url: "https://api.openshift.com/api/assisted-install/v2/clusters/{{ cluster_id }}"
+        headers:
+          Authorization: "Bearer {{ assisted_token.json.access_token }}"
+        status_code: 200
+      register: ready_cluster
+      until:
+        - ready_cluster.json.status == 'ready'
+        - ready_cluster.json.hosts | length == groups[nodes_group] | length
+        - ready_cluster.json.hosts | selectattr('status', 'equalto', 'known') | list | length == groups[nodes_group] | length
+      retries: 24
+      delay: 10
+      no_log: true
+
+    - name: Verify the final host assignments and compact topology
+      ansible.builtin.assert:
+        that:
+          - ready_cluster.json.high_availability_mode == 'Full'
+          - ready_cluster.json.schedulable_masters | bool
+          - >-
+            ready_cluster.json.hosts
+            | baremetal_host_plan(groups[nodes_group] | map('extract', hostvars) | list, verify=true)
+            | length == groups[nodes_group] | length
+      when: configure_baremetal_hosts | default(false) | bool
 
     - name: Start cluster installation
       rhpds.assisted_installer.install_cluster:

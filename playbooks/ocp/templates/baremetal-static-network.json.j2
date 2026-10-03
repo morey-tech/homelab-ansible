@@ -1,0 +1,32 @@
+{% set result = [] %}
+{% for node in groups[nodes_group] %}
+{% set network = {
+  'interfaces': [{
+    'name': 'bond0', 'type': 'bond', 'state': 'up', 'mtu': bond_mtu,
+    'mac-address': hostvars[node].mac_address,
+    'ipv4': {'enabled': true, 'dhcp': false, 'address': [
+      {'ip': hostvars[node].ip_address, 'prefix-length': net_prefix | int}
+    ]},
+    'link-aggregation': {'mode': '802.3ad', 'options': {'miimon': '100'}, 'port': bond_interfaces}
+  }],
+  'dns-resolver': {'config': {'server': [gateway_ip]}},
+  'routes': {'config': [{
+    'destination': '0.0.0.0/0', 'next-hop-address': gateway_ip,
+    'next-hop-interface': 'bond0', 'table-id': 254
+  }]}
+} %}
+{% set mapping = [] %}
+{% for mac in hostvars[node].bond_mac_addresses %}
+{% set _ = mapping.append({'mac_address': mac, 'logical_nic_name': bond_interfaces[loop.index0]}) %}
+{% endfor %}
+{% for mac in hostvars[node].disabled_interface_mac_addresses %}
+{% set logical_name = 'disabled' ~ loop.index0 %}
+{% set _ = network['interfaces'].append({
+  'name': logical_name, 'type': 'ethernet', 'state': 'down',
+  'ipv4': {'enabled': false}, 'ipv6': {'enabled': false}
+}) %}
+{% set _ = mapping.append({'mac_address': mac, 'logical_nic_name': logical_name}) %}
+{% endfor %}
+{% set _ = result.append({'network_yaml': network | to_nice_yaml, 'mac_interface_map': mapping}) %}
+{% endfor %}
+{{ result | to_json }}
