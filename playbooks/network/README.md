@@ -491,6 +491,8 @@ Full untagged DNS runs also manage these overrides and therefore require
 `-i inventory/`. Technitium-only tags can still use `-i inventory/dns.yml`.
 Tailscale DNS must be reachable from pfSense; the override does not install or
 authenticate Tailscale on the router.
+Use the separate [pfSense Tailscale playbook and guide](README-tailscale.md)
+to install the package and manage its existing VPN settings.
 
 The [local domain-override module](../../library/pfsense_dns_domain_override.py)
 uses the pinned `pfsensible.core` configuration helpers, supports check/diff mode,
